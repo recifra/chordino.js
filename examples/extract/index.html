@@ -1,0 +1,49 @@
+<button id="btn-start">Detect Chords</button>
+<input type="text" id="mp3-url" placeholder="Enter MP3 URL" value="chords.mp3">
+<script src="./chordino.js"></script>
+<script>
+    document.getElementById('btn-start').addEventListener('click', async () => {
+        const url = document.getElementById('mp3-url').value;
+        if (!url) {
+            alert('Please enter an MP3 URL');
+            return;
+        }
+        const samplerate = 44000;
+        const bufferSize = 4096;
+        const pBuffer = Module._malloc(bufferSize * Float32Array.BYTES_PER_ELEMENT);
+        const instance = Module.initializePlugin(samplerate, bufferSize);
+        const audioContext = new AudioContext({ sampleRate: samplerate });
+        try {
+            const response = await fetch(url);
+            const arrayBuffer = await response.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+            const channelData = audioBuffer.getChannelData(0); // mono
+            const totalSamples = channelData.length;
+
+            for (let offset = 0; offset < totalSamples; offset += bufferSize) {
+                const chunkSize = Math.min(bufferSize, totalSamples - offset);
+                const data = channelData.slice(offset, offset + chunkSize);
+                // Pad if necessary
+                const paddedData = new Float32Array(bufferSize);
+                paddedData.set(data);
+
+                const currentTimeMs = Math.trunc((offset / samplerate) * 1000);
+
+                HEAPF32.set(paddedData, pBuffer >> 2);
+            
+                // Process data
+                Module.processBuffer(instance, pBuffer, currentTimeMs);
+            }
+            // Read back the results
+            const result = Module.getResult(instance);
+            console.log('Processing complete', result);
+        } catch (err) {
+            console.error('Error processing MP3:', err);
+        } finally {
+            Module.releasePlugin(instance);
+            Module._free(pBuffer);
+            audioContext.close();
+        }
+    });
+</script>

@@ -1,0 +1,69 @@
+<button id="btn-action">Start Detect</button>
+<script>
+    let stream;
+    let workletNode;
+    const btnAction = document.getElementById('btn-action');
+
+    const startAction = async () => {
+        if (workletNode) {
+            return;
+        }
+        try {
+            const samplerate = 44000;
+            const bufferSize = 4096;
+            stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
+            const audioContext = new AudioContext({ sampleRate: samplerate });
+            const source = audioContext.createMediaStreamSource(stream);
+
+            // Load the AudioWorklet module
+            await audioContext.audioWorklet.addModule('./chordino-processor.js');
+
+            // Create the AudioWorkletNode
+            workletNode = new AudioWorkletNode(audioContext, 'chord-processor');
+
+            // Handle messages from the worklet
+            workletNode.port.onmessage = (event) => {
+                if (event.data.type === 'chordResult') {
+                    console.log('Chords:', event.data.result);
+                }
+                if (event.data.type === 'log') {
+                    console.log('Log:', event.data.result);
+                }
+                if (event.data.type === 'stopped') {
+                    console.log('Stopped detecting');
+                }
+            };
+
+            source.connect(workletNode);
+            workletNode.connect(audioContext.destination);
+            console.log('Listening to microphone...');
+        } catch (err) {
+            console.error('Error accessing microphone:', err);
+        }
+    };
+
+    const stopAction = async () => {
+        if (!workletNode) {
+            return;
+        }
+        const _workletNode = workletNode;
+        workletNode = undefined;
+        stream.getAudioTracks().forEach((track) => {
+            track.stop();
+        });
+        _workletNode.port.postMessage({ type: 'stop' });
+        _workletNode.disconnect();
+    };
+
+    const onAction = () => {
+        if (workletNode) {
+            btnAction.textContent = 'Start Detect'
+            stopAction();
+            return;
+        }
+        btnAction.textContent = 'Stop Detect';
+        startAction();
+    }
+
+    btnAction.addEventListener('click', onAction);
+</script>
