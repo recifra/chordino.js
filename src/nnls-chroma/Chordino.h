@@ -34,7 +34,6 @@ public:
     string getName() const;
     string getDescription() const;
 
-    ParameterList getParameterDescriptors() const;
     OutputList getOutputDescriptors() const;
 
     FeatureSet process(const float *const *inputBuffers,

@@ -39,13 +39,7 @@ public:
     size_t getMinChannelCount() const;
     size_t getMaxChannelCount() const;
 
-    ParameterList getParameterDescriptors() const;
-    float getParameter(string identifier) const;
-    void setParameter(string identifier, float value);
 
-    ProgramList getPrograms() const;
-    string getCurrentProgram() const;
-    void selectProgram(string name);
 
     bool initialise(size_t channels, size_t stepSize, size_t blockSize);
     void reset();

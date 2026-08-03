@@ -21,18 +21,12 @@
 #include <cmath>
 #include <list>
 #include <iostream>
-#include <fstream>
 #include <sstream>
 #include <cassert>
 #include <cstdlib>
 #include <cstdio>
-#include <boost/tokenizer.hpp>
-#include <boost/iostreams/device/file.hpp>
-#include <boost/iostreams/stream.hpp>
-#include <boost/lexical_cast.hpp>
 
 using namespace std;
-using namespace boost;
 
 
 /** Special Convolution
@@ -206,66 +200,6 @@ void dictionaryMatrix(float* dm, float s_param) {
     }
 }
 
-static
-std::vector<std::string>
-getPluginPath()
-{
-    //!!! This is duplicated from PluginHostAdapter::getPluginPath,
-    //!!! which is not available to us in the plugin (only to the
-    //!!! host)
-
-    std::vector<std::string> path;
-    std::string envPath;
-
-    char *cpath = getenv("VAMP_PATH");
-    if (cpath) envPath = cpath;
-
-#ifdef _WIN32
-#define PATH_SEPARATOR ';'
-#define DEFAULT_VAMP_PATH "%ProgramFiles%\\Vamp Plugins"
-#else
-#define PATH_SEPARATOR ':'
-#ifdef __APPLE__
-#define DEFAULT_VAMP_PATH "$HOME/Library/Audio/Plug-Ins/Vamp:/Library/Audio/Plug-Ins/Vamp"
-#else
-#define DEFAULT_VAMP_PATH "$HOME/vamp:$HOME/.vamp:/usr/local/lib/vamp:/usr/lib/vamp"
-#endif
-#endif
-
-    if (envPath == "") {
-        envPath = DEFAULT_VAMP_PATH;
-        char *chome = getenv("HOME");
-        if (chome) {
-            std::string home(chome);
-            std::string::size_type f;
-            while ((f = envPath.find("$HOME")) != std::string::npos &&
-                    f < envPath.length()) {
-                envPath.replace(f, 5, home);
-            }
-        }
-#ifdef _WIN32
-        char *cpfiles = getenv("ProgramFiles");
-        if (!cpfiles) cpfiles = (char *)"C:\\Program Files";
-        std::string pfiles(cpfiles);
-        std::string::size_type f;
-        while ((f = envPath.find("%ProgramFiles%")) != std::string::npos &&
-               f < envPath.length()) {
-            envPath.replace(f, 14, pfiles);
-        }
-#endif
-    }
-
-    std::string::size_type index = 0, newindex = 0;
-
-    while ((newindex = envPath.find(PATH_SEPARATOR, index)) < envPath.size()) {
-	path.push_back(envPath.substr(index, newindex - index));
-	index = newindex + 1;
-    }
-    
-    path.push_back(envPath.substr(index));
-
-    return path;
-}
 
 
 
@@ -386,16 +320,12 @@ static vector<float> staticChordvalues() {
     return chordvalues;
 }
 
-vector<string> chordDictionary(vector<float> *mchorddict, vector<vector<int> > *m_chordnotes, float boostN, float harte_syntax) {    
-    
-    typedef tokenizer<char_separator<char> > Tok;
-    char_separator<char> sep(",; ","=");
+// The upstream plugin looked for a user-supplied chord.dict alongside the plugin
+// binary and parsed it here. There is no filesystem in the wasm build, so that path
+// could never fire; the dictionary always comes from staticChordnames() and
+// staticChordvalues() below. Dropping it removes the only use of boost.
+vector<string> chordDictionary(vector<float> *mchorddict, vector<vector<int> > *m_chordnotes, float boostN, float harte_syntax) {
 
-    string chordDictBase("chord.dict");
-    string chordDictFilename;
-
-    vector<string> ppath = getPluginPath();
-    
 	const char* notenames[24] = {
 	    "A  (bass)","Bb (bass)","B  (bass)","C  (bass)","C# (bass)","D  (bass)","Eb (bass)","E  (bass)","F  (bass)","F# (bass)","G  (bass)","Ab (bass)",
 	    "A","Bb","B","C","C#","D","Eb","E","F","F#","G","Ab"};
@@ -416,33 +346,6 @@ vector<string> chordDictionary(vector<float> *mchorddict, vector<vector<int> > *
             {"1","","2","b3","3","4","","5","","6","b7","7"}
 	};
 
-    bool hasExternalDictinoary = true;
-	int ppathsize = static_cast<int>(ppath.size());
-    for (int i = 0; i < ppathsize; ++i) {
-    	chordDictFilename = ppath[i] + "/" + chordDictBase;
-//    	cerr << "Looking for chord.dict in " << chordDictFilename << "..." ;
-    	fstream fin;
-        fin.open(chordDictFilename.c_str(),ios::in);
-        if( fin.is_open() )
-        {
-            fin.close();
-//    	    cerr << " success." << endl;
-    	    break;
-        } else {
-            if (i+1 < ppathsize) {
-//                cerr << " (not found yet) ..." << endl;
-            } else {
-//                cerr << "* WARNING: failed to find chord dictionary, using default chord dictionary." << endl;
-                hasExternalDictinoary = false;                
-            } 
-        }
-    }
-
-    iostreams::stream<iostreams::file_source> chordDictFile(chordDictFilename);
-    string line;
-    // int iElement = 0;
-    int nChord = 0;
-	
 	vector<float> tempChordDict = staticChordvalues();
     vector<string> tempChordNames = staticChordnames();
 	if (harte_syntax == 1.0) {
@@ -453,37 +356,7 @@ vector<string> chordDictionary(vector<float> *mchorddict, vector<vector<int> > *
 
     vector<string> loadedChordNames;
     vector<float> loadedChordDict;
-    if (hasExternalDictinoary && chordDictFile.is_open()) {
-        tempChordDict.clear();
-        tempChordNames.clear();
-        while (std::getline(chordDictFile, line)) { // loop over lines in chord.dict file	            	
-            // first, get the chord definition
-            string chordType;
-            vector<float> tempPCVector;			
-            // cerr << line << endl;
-            if (!line.empty() && line.substr(0,1) != "#") {
-                Tok tok(line, sep);			
-                for(Tok::iterator tok_iter = tok.begin(); tok_iter != tok.end(); ++tok_iter) { // loop over line elements
-                    string tempString = *tok_iter;
-                    // cerr << tempString << endl;
-                    if (tok_iter == tok.begin()) { // either the chord name or a colon                        
-                        if (tempString == "=") {
-                            chordType = "";
-                        } else {
-                            chordType = tempString;
-                            tok_iter++;                            
-                        }
-                    } else {
-                        tempChordDict.push_back(lexical_cast<float>(*tok_iter));
-                    }
-                }                
-                tempChordNames.push_back(chordType);
-            }
-        }
-        cerr << "-----------------> " << tempChordNames.size() << endl;
-    }
-    
-        
+
     for (int iType = 0; iType < (int)tempChordNames.size(); ++iType) {
         // now make all 12 chords of every type
         for (int iSemitone = 0; iSemitone < 12; iSemitone++) {	
@@ -570,12 +443,7 @@ vector<string> chordDictionary(vector<float> *mchorddict, vector<vector<int> > *
     
 
 
-    nChord = 0;
-    for (int i = 0; i < (int)loadedChordNames.size(); i++) {
-        nChord++;
-    }
-    chordDictFile.close();
-
+    int nChord = (int)loadedChordNames.size();
 
     // mchorddict = new float[nChord*24];
     for (int i = 0; i < nChord*24; i++) {

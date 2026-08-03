@@ -87,103 +87,14 @@ string
 Chordino::getDescription() const
 {
     if (debug_on) cerr << "--> getDescription" << endl;
-    return "Chordino provides a simple chord transcription based on NNLS Chroma (as in the NNLS Chroma plugin). Chord profiles given by the user in the file chord.dict are used to calculate frame-wise chord similarities. A simple (non-state-of-the-art!) algorithm smoothes these to provide a chord transcription using a standard HMM/Viterbi approach.";
+    return "Chordino provides a simple chord transcription based on NNLS Chroma (as in the NNLS Chroma plugin). A built-in set of chord profiles is used to calculate frame-wise chord similarities. A simple (non-state-of-the-art!) algorithm smoothes these to provide a chord transcription using a standard HMM/Viterbi approach.";
 }
 
-Chordino::ParameterList
-Chordino::getParameterDescriptors() const
-{
-    if (debug_on) cerr << "--> getParameterDescriptors" << endl;
-    ParameterList list;
-
-    ParameterDescriptor useNNLSParam;
-    useNNLSParam.identifier = "useNNLS";
-    useNNLSParam.name = "use approximate transcription (NNLS)";
-    useNNLSParam.description = "Toggles approximate transcription (NNLS).";
-    useNNLSParam.unit = "";
-    useNNLSParam.minValue = 0.0;
-    useNNLSParam.maxValue = 1.0;
-    useNNLSParam.defaultValue = 1.0;
-    useNNLSParam.isQuantized = true;
-	useNNLSParam.quantizeStep = 1.0;
-    list.push_back(useNNLSParam);
-
-    ParameterDescriptor rollonParam;
-    rollonParam.identifier = "rollon";
-    rollonParam.name = "bass noise threshold";
-    rollonParam.description = "Consider the cumulative energy spectrum (from low to high frequencies). All bins below the first bin whose cumulative energy exceeds the quantile [bass noise threshold] x [total energy] will be set to 0. A threshold value of 0 means that no bins will be changed.";
-    rollonParam.unit = "%";
-    rollonParam.minValue = 0;
-    rollonParam.maxValue = 5;
-    rollonParam.defaultValue = 0.0;
-    rollonParam.isQuantized = true;
-	rollonParam.quantizeStep = 0.5;
-    list.push_back(rollonParam);
-
-    ParameterDescriptor tuningmodeParam;
-    tuningmodeParam.identifier = "tuningmode";
-    tuningmodeParam.name = "tuning mode";
-    tuningmodeParam.description = "Tuning can be performed locally or on the whole extraction segment. Local tuning is only advisable when the tuning is likely to change over the audio, for example in podcasts, or in a cappella singing.";
-    tuningmodeParam.unit = "";
-    tuningmodeParam.minValue = 0;
-    tuningmodeParam.maxValue = 1;
-    tuningmodeParam.defaultValue = 0.0;
-    tuningmodeParam.isQuantized = true;
-    tuningmodeParam.valueNames.push_back("global tuning");
-    tuningmodeParam.valueNames.push_back("local tuning");
-    tuningmodeParam.quantizeStep = 1.0;
-    list.push_back(tuningmodeParam);
-
-    ParameterDescriptor whiteningParam;
-    whiteningParam.identifier = "whitening";
-    whiteningParam.name = "spectral whitening";
-    whiteningParam.description = "Spectral whitening: no whitening - 0; whitening - 1.";
-    whiteningParam.unit = "";
-    whiteningParam.isQuantized = true;
-    whiteningParam.minValue = 0.0;
-    whiteningParam.maxValue = 1.0;
-    whiteningParam.defaultValue = 1.0;
-    whiteningParam.isQuantized = false;
-    list.push_back(whiteningParam);
-
-    ParameterDescriptor spectralShapeParam;
-    spectralShapeParam.identifier = "s";
-    spectralShapeParam.name = "spectral shape";
-    spectralShapeParam.description = "Determines how individual notes in the note dictionary look: higher values mean more dominant higher harmonics.";
-    spectralShapeParam.unit = "";
-    spectralShapeParam.minValue = 0.5;
-    spectralShapeParam.maxValue = 0.9;
-    spectralShapeParam.defaultValue = 0.7;
-    spectralShapeParam.isQuantized = false;
-    list.push_back(spectralShapeParam);
-
-    ParameterDescriptor boostnParam;
-    boostnParam.identifier = "boostn";
-    boostnParam.name = "boost N";
-    boostnParam.description = "Boost likelihood of the N (no chord) label.";
-    boostnParam.unit = "";
-    boostnParam.minValue = 0.0;
-    boostnParam.maxValue = 1.0;
-    boostnParam.defaultValue = 0.1;
-    boostnParam.isQuantized = false;
-    list.push_back(boostnParam);
-
-    ParameterDescriptor usehartesyntaxParam;
-    usehartesyntaxParam.identifier = "usehartesyntax";
-    usehartesyntaxParam.name = "use Harte syntax";
-    usehartesyntaxParam.description = "Use the chord syntax proposed by Harte";
-    usehartesyntaxParam.unit = "";
-    usehartesyntaxParam.minValue = 0.0;
-    usehartesyntaxParam.maxValue = 1.0;
-    usehartesyntaxParam.defaultValue = 0.0;
-    usehartesyntaxParam.isQuantized = true;
-	usehartesyntaxParam.quantizeStep = 1.0;
-	usehartesyntaxParam.valueNames.push_back("no");
-    usehartesyntaxParam.valueNames.push_back("yes");
-    list.push_back(usehartesyntaxParam);
-
-    return list;
-}
+// Parameters used to be exposed through Vamp's named-parameter machinery so a host
+// like Sonic Visualiser could tune them at runtime. This build embeds its own host
+// and never sets them, so the defaults in NNLSBase's constructor are the only values
+// that ever apply; the descriptor list is gone and PluginBase's empty default is
+// inherited instead.
 
 Chordino::OutputList
 Chordino::getOutputDescriptors() const
