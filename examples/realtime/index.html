@@ -9,17 +9,21 @@
             return;
         }
         try {
-            const samplerate = 44000;
-            const bufferSize = 4096;
-            stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
-            const audioContext = new AudioContext({ sampleRate: samplerate });
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: false }
+            });
+            const audioContext = new AudioContext();
             const source = audioContext.createMediaStreamSource(stream);
 
             // Load the AudioWorklet module
             await audioContext.audioWorklet.addModule('./chordino-processor.js');
 
             // Create the AudioWorkletNode
-            workletNode = new AudioWorkletNode(audioContext, 'chord-processor');
+            workletNode = new AudioWorkletNode(audioContext, 'chord-processor', {
+                channelCount: 1,
+                channelCountMode: "explicit",
+                channelInterpretation: "discrete"
+            });
 
             // Handle messages from the worklet
             workletNode.port.onmessage = (event) => {

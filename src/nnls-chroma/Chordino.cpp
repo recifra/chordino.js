@@ -28,6 +28,32 @@
 #include <algorithm>
 
 const bool debug_on = false;
+const double bassBoost = 2.5; // extra weight for the bass bins so slash chords (e.g. C/E, C/G) score correctly
+// Leaky integrator applied to chroma before chord matching, so a chord needs to be
+// sustained for roughly this long to dominate the signal used for scoring -- a
+// single noisy/transient frame can't flip the match. alpha tuned for an effective
+// window of ~300ms at the analysis frame rate (preferred step size 2048 samples,
+// ~46ms/frame at 44.1kHz): alpha = 1 - exp(-frameMs/windowMs).
+const double chromaEmaAlpha = 0.15;
+// The bass bins get a much faster integrator. Which bass note is sounding is the
+// only thing separating a chord from its inversions (F and F/A share all three
+// treble notes and differ only by which bass bin is 1.0 instead of 0.5), so it is a
+// small difference riding on a large common part -- exactly what slow smoothing
+// erases, on top of the previous chord's bass bleeding into the current one.
+const double chromaEmaAlphaBass = 0.5;
+// Confidence gate. The salience below is normalized to sum to 1, which makes the
+// match a forced choice: something always wins, however badly it fits. These two
+// ratios restore a real "none of the above" by comparing the winner's raw score
+// against the no-chord hypothesis and against the best candidate on a *different*
+// root. Speech and singing slide through roots (every syllable implies a new one),
+// so they score high in absolute terms but win by a tiny margin over rival roots --
+// which is exactly what this catches. Variants sharing the winner's root (C vs C7
+// vs Csus4) are refinements rather than ambiguity, so they don't count against it.
+// Both are ratios, so they don't need recalibrating when input gain changes.
+const double minChordVsNoChord = 1.05;
+const double minRootMargin = 1.05;
+// How hard a frame that fails the gate is pushed towards N.
+const double noConfidenceDamping = 0.01;
 
 Chordino::Chordino(float inputSampleRate) :
     NNLSBase(inputSampleRate),
@@ -275,7 +301,42 @@ Chordino::getRemainingFeatures()
     FeatureSet fsOut;
     if (m_logSpectrum.size() == 0) return fsOut;
     int nChord = m_chordnames.size();
-    // 
+
+    // Weighted L2 norm per candidate template. Raw dot-product scoring favours
+    // templates with more populated bins (7th/9th/11th/13th chords, add-tone
+    // chords, bass/slash variants) purely because they have more chances to pick
+    // up incidental harmonic/noise energy across bins that aren't really part of
+    // the chord being played (e.g. F13 shares all 3 notes of Dm plus 3 extra, so
+    // it can outscore Dm whenever those 3 extra bins have any stray energy).
+    // Dividing by each template's own norm removes that size bias.
+    // Extension-tone penalty: normalizing by template norm still isn't enough for
+    // chords like 9/11/13, because their "extra" notes often ARE the real harmonic
+    // overtones of notes already in a simpler chord (e.g. Bb's own 5th and flat-7th
+    // partials are F and Ab -- exactly the two "extra" notes Bb13 adds on top of a
+    // Gm triad's G/Bb/D). That energy is real, not noise, so norm alone can't tell
+    // the extended chord apart from harmonic bleed off the simpler one. Bias towards
+    // the simpler reading by discounting each chord tone beyond a triad.
+    vector<double> templateNorm(nChord, 1.0);
+    vector<double> extensionPenalty(nChord, 1.0);
+    for (int iChord = 0; iChord < nChord; iChord++) {
+        double bassWeight = (iChord == nChord - 1) ? 1.0 : bassBoost;
+        double sumSq = 0;
+        int noteCount = 0;
+        for (int iBin = 0; iBin < 12; iBin++) {
+            double v = bassWeight * m_chorddict[24 * iChord + iBin];
+            sumSq += v * v;
+        }
+        for (int iBin = 12; iBin < 24; iBin++) {
+            double v = m_chorddict[24 * iChord + iBin];
+            sumSq += v * v;
+            if (m_chorddict[24 * iChord + iBin] > 0) noteCount++;
+        }
+        if (sumSq > 0) templateNorm[iChord] = sqrt(sumSq);
+        if (iChord != nChord - 1 && noteCount > 3) {
+            extensionPenalty[iChord] = pow(0.93, noteCount - 3);
+        }
+    }
+    //
     /**  Calculate Tuning
          calculate tuning from (using the angle of the complex number defined by the 
          cumulative mean real and imag values)
@@ -372,8 +433,15 @@ Chordino::getRemainingFeatures()
     count = 0;
 
     FeatureList chromaList;
-    
+
     bool clipwarned = false;
+
+    // Smoothed copy of the chroma used only for chord matching (see chromaEmaAlpha
+    // above); the raw per-frame chroma is left untouched for the exported
+    // chromagram feature and for tuning/normalisation, which should reflect the
+    // actual instantaneous signal.
+    vector<double> smoothedChroma(24, 0.0);
+    bool smoothedChromaInit = false;
 
     for (FeatureList::iterator it = tunedSpec.begin(); it != tunedSpec.end(); ++it) {
         Feature currentTunedSpec = *it; // logfreq spectrum
@@ -452,8 +520,19 @@ Chordino::getRemainingFeatures()
         }
 
         vector<float> origchroma = chroma;
-        chroma.insert(chroma.begin(), basschroma.begin(), basschroma.end()); // just stack the both chromas 
+        chroma.insert(chroma.begin(), basschroma.begin(), basschroma.end()); // just stack the both chromas
         currentChromas.values = chroma;
+
+        if (!smoothedChromaInit) {
+            for (int i = 0; i < 24; i++) smoothedChroma[i] = chroma[i];
+            smoothedChromaInit = true;
+        } else {
+            // Bins 0-11 are the bass chroma, 12-23 the treble one (stacked above).
+            for (int i = 0; i < 24; i++) {
+                double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
+                smoothedChroma[i] = alpha * chroma[i] + (1 - alpha) * smoothedChroma[i];
+            }
+        }
 
         if (m_doNormalizeChroma > 0) {
             vector<float> chromanorm = vector<float>(3,0);			
@@ -490,15 +569,24 @@ Chordino::getRemainingFeatures()
         vector<double> currentChordSalience;
         double tempchordvalue = 0;
         double sumchordvalue = 0;
+        // Scores kept as scored, before the exponential and the normalisation below
+        // discard how well each candidate actually fit (see the gate further down).
+        vector<double> rawChordValue(nChord, 0.0);
 	        
         for (int iChord = 0; iChord < nChord; iChord++) {
             tempchordvalue = 0;
+            // N's bass template is a diffuse 0.5 across all 12 bins (matches everything a
+            // little), unlike real chords' sparse single-bin template, so boosting it here
+            // too would make N win disproportionately more often than intended.
+            double bassWeight = (iChord == nChord - 1) ? 1.0 : bassBoost;
             for (int iBin = 0; iBin < 12; iBin++) {
-                tempchordvalue += m_chorddict[24 * iChord + iBin] * chroma[iBin];
+                tempchordvalue += bassWeight * m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
             for (int iBin = 12; iBin < 24; iBin++) {
-                tempchordvalue += m_chorddict[24 * iChord + iBin] * chroma[iBin];
+                tempchordvalue += m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
+            tempchordvalue /= templateNorm[iChord];
+            tempchordvalue *= extensionPenalty[iChord];
             if (iChord == nChord-1) tempchordvalue *= .7;
             if (tempchordvalue < 0) tempchordvalue = 0.0;
             if (tempchordvalue > 200.0) {
@@ -508,16 +596,53 @@ Chordino::getRemainingFeatures()
                 }
                 tempchordvalue = 200.0;
             }
+            rawChordValue[iChord] = tempchordvalue;
             tempchordvalue = pow(1.3, tempchordvalue);
             sumchordvalue += tempchordvalue;
             currentChordSalience.push_back(tempchordvalue);
         }
+
+        // Chords are laid out as [type][root] with 12 roots per type (see
+        // chordDictionary), so a candidate's root is simply its index mod 12, and the
+        // last entry is the no-chord hypothesis N.
+        int bestChord = 0;
+        for (int iChord = 1; iChord < nChord - 1; iChord++) {
+            if (rawChordValue[iChord] > rawChordValue[bestChord]) bestChord = iChord;
+        }
+        double bestRivalRoot = 0;
+        for (int iChord = 0; iChord < nChord - 1; iChord++) {
+            if (iChord % 12 == bestChord % 12) continue;
+            if (rawChordValue[iChord] > bestRivalRoot) bestRivalRoot = rawChordValue[iChord];
+        }
+        bool confident =
+            rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1] &&
+            rawChordValue[bestChord] > minRootMargin * bestRivalRoot;
+
         if (sumchordvalue > 0) {
             for (int iChord = 0; iChord < nChord; iChord++) {
                 currentChordSalience[iChord] /= sumchordvalue;
             }
         } else {
             currentChordSalience[nChord-1] = 1.0;
+        }
+
+        if (!confident) {
+            // Nothing fits well enough to call, so shift the weight onto N rather than
+            // reporting the least-bad guess. Damp the others instead of zeroing them:
+            // ViterbiPath multiplies these observations directly and the harmonic
+            // change feature divides by them, so a hard zero would poison both. Keeping
+            // it a distribution also lets the Viterbi override a single gated frame
+            // when the surrounding context is strong.
+            double gatedSum = currentChordSalience[nChord-1];
+            for (int iChord = 0; iChord < nChord - 1; iChord++) {
+                currentChordSalience[iChord] *= noConfidenceDamping;
+                gatedSum += currentChordSalience[iChord];
+            }
+            if (gatedSum > 0) {
+                for (int iChord = 0; iChord < nChord; iChord++) {
+                    currentChordSalience[iChord] /= gatedSum;
+                }
+            }
         }
         chordogram.push_back(currentChordSalience);
 	        
@@ -531,8 +656,12 @@ Chordino::getRemainingFeatures()
     int oldchord = nChord-1;
     double selftransprob = 0.99;
  
-    // vector<double> init = vector<double>(nChord,1.0/nChord);
-    vector<double> init = vector<double>(nChord,0); init[nChord-1] = 1;
+    // Uniform prior: forcing init[nChord-1]=1 (N) here makes every decode assume the
+    // previous state was "no chord", which is only true at the very start of a session.
+    // With periodic resetProcess() calls (real-time streaming), that false certainty
+    // reintroduces a spurious N bias at every reset boundary, since selftransprob makes
+    // it costly for the Viterbi path to leave N even when real chord evidence is strong.
+    vector<double> init = vector<double>(nChord,1.0/nChord);
     
     double *delta;
     delta = (double *)malloc(sizeof(double)*nFrame*nChord);                

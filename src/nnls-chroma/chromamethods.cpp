@@ -275,20 +275,33 @@ static vector<string> staticChordnames() {
     chordnames.push_back("");// =0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
     chordnames.push_back("m");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0
     chordnames.push_back("m");//=0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0
-    chordnames.push_back("m7b5");//=0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,1,0,0,1,0,0,0,1,0
-    chordnames.push_back("m7b5");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,1,0
+    chordnames.push_back("º");//=0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,1,0,0,1,0,0,0,1,0
+    chordnames.push_back("º");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,1,0
     chordnames.push_back("6");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,1,0,0
     chordnames.push_back("7");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,1,0
-    chordnames.push_back("maj7");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,1
+    chordnames.push_back("7M");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,1
     chordnames.push_back("m7");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,1,0
     chordnames.push_back("m6");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,0,1,0,0
     chordnames.push_back("");//=0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
     chordnames.push_back("");//=0,0,0,0,0,0,0,1,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
-    chordnames.push_back("dim");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0
+    chordnames.push_back("º");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0
     chordnames.push_back("aug");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0
     chordnames.push_back("");//=0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
     chordnames.push_back("");//=0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,1,0,0,0,0 
     chordnames.push_back("7");//=0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,1,0
+    chordnames.push_back("sus2");
+    chordnames.push_back("sus2");
+    chordnames.push_back("sus4");
+    chordnames.push_back("sus4");
+    chordnames.push_back("5");
+    chordnames.push_back("5");
+    chordnames.push_back("2");
+    chordnames.push_back("2");
+    chordnames.push_back("4");
+    chordnames.push_back("4");
+    chordnames.push_back("9");
+    chordnames.push_back("11");
+    chordnames.push_back("13");
 	// from here: Harte syntax
     chordnames.push_back("");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
     chordnames.push_back("");// =0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
@@ -308,6 +321,19 @@ static vector<string> staticChordnames() {
     chordnames.push_back("");//=0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
     chordnames.push_back("");//=0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,1,0,0,0,0 
     chordnames.push_back(":7");//=0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,1,0
+    chordnames.push_back(":sus2");
+    chordnames.push_back(":sus2");
+    chordnames.push_back(":sus4");
+    chordnames.push_back(":sus4");
+    chordnames.push_back(":5");
+    chordnames.push_back(":5");
+    chordnames.push_back(":add9");
+    chordnames.push_back(":add9");
+    chordnames.push_back(":add11");
+    chordnames.push_back(":add11");
+    chordnames.push_back(":9");
+    chordnames.push_back(":11");
+    chordnames.push_back(":13");
     return chordnames;
 }
 
@@ -330,8 +356,29 @@ static vector<float> staticChordvalues() {
     1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0,
     0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0,
     0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,1,0,0,0,0,
-    0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,1,0};
-    for (int iChord = 0; iChord < 18; ++iChord) {
+    0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,1,0,
+    // sus2: root,2nd,5th
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,1,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,1,0,0,0,0,
+    // sus4: root,4th,5th
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,0,1,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,0,1,0,0,0,0,
+    // 5 (power chord): root,5th
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,
+    // 2 (add2): root,2nd,3rd,5th
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,0,0,1,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,0,0,1,0,0,0,0,
+    // 4 (add4): root,3rd,4th,5th
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,0,1,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,0,1,0,0,0,0,
+    // 9 (dominant 9th): root,2nd,3rd,5th,b7
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,0,0,1,0,0,1,0,
+    // 11 (dominant 11th, 3rd omitted): root,2nd,4th,5th,b7
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,1,0,1,0,0,1,0,
+    // 13 (dominant 13th, 11th omitted): root,2nd,3rd,5th,6th/13th,b7
+    1,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,1,0,0,1,0,1,1,0};
+    for (int iChord = 0; iChord < 31; ++iChord) {
         for (int iNote = 0; iNote < 24; iNote++) {
             chordvalues.push_back(chordvaluearray[24*iChord+iNote]);
         }
@@ -460,7 +507,12 @@ vector<string> chordDictionary(vector<float> *mchorddict, vector<vector<int> > *
                     bassValue = 1;
                     tempchordnotes.push_back(MIDI_basenote + (kSemitone+12) % 12);
                 } else {
-                    if (tempChordDict[24*iType+((kSemitone - iSemitone + 12) % 12) + 12] == 1) bassValue = 0.5;
+                    // Non-designated chord notes still get some bass credit, since they
+                    // do show up down there, but at 0.5 they left only a 0.5 gap against
+                    // the designated bass note -- and that gap is the *only* thing
+                    // telling C from C/E, since their treble templates are identical and
+                    // cancel out of the comparison. 0.25 doubles that contrast.
+                    if (tempChordDict[24*iType+((kSemitone - iSemitone + 12) % 12) + 12] == 1) bassValue = 0.25;
                 }
                 loadedChordDict.push_back(bassValue);                        
             }

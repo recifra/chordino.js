@@ -1,5 +1,13 @@
-export VAMP_PATH=$HOME/Development/github/vamp-plugin-sdk
+## Requirements
+- emsdk
+- boost
+- vamp-plugin-sdk
 
+```sh
+# export VAMP_PATH=$HOME/Development/github/vamp-plugin-sdk
+```
+
+```sh
 emcc --bind -O3 \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH \
@@ -16,6 +24,8 @@ emcc --bind -O3 \
     $VAMP_PATH/src/vamp-hostsdk/*.c \
     $VAMP_PATH/src/vamp-hostsdk/*.cpp \
     $VAMP_PATH/src/vamp-sdk/RealTime.cpp
+```
 
-
+```sh
 cat chordino.js ../examples/realtime/chord-processor.js > ../examples/realtime/chordino-processor.js
+```
