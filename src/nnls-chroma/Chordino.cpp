@@ -28,7 +28,11 @@
 #include <algorithm>
 
 const bool debug_on = false;
-const double bassBoost = 2.5; // extra weight for the bass bins so slash chords (e.g. C/E, C/G) score correctly
+// Relative weight of the bass half of the match against the treble half. The two
+// halves are normalized independently (see below), so this is the only thing setting
+// how much say the bass note has; it is a plain ratio between two comparable
+// quantities rather than a gain applied to one of them.
+const double bassWeight = 0.6;
 // Leaky integrator applied to chroma before chord matching, so a chord needs to be
 // sustained for roughly this long to dominate the signal used for scoring -- a
 // single noisy/transient frame can't flip the match. alpha tuned for an effective
@@ -37,7 +41,7 @@ const double bassBoost = 2.5; // extra weight for the bass bins so slash chords 
 const double chromaEmaAlpha = 0.15;
 // The bass bins get a much faster integrator. Which bass note is sounding is the
 // only thing separating a chord from its inversions (F and F/A share all three
-// treble notes and differ only by which bass bin is 1.0 instead of 0.5), so it is a
+// treble notes and differ only by which bass bin is 1.0 instead of 0.25), so it is a
 // small difference riding on a large common part -- exactly what slow smoothing
 // erases, on top of the previous chord's bass bleeding into the current one.
 const double chromaEmaAlphaBass = 0.5;
@@ -213,38 +217,64 @@ Chordino::getRemainingFeatures()
     if (m_logSpectrum.size() == 0) return fsOut;
     int nChord = m_chordnames.size();
 
-    // Weighted L2 norm per candidate template. Raw dot-product scoring favours
-    // templates with more populated bins (7th/9th/11th/13th chords, add-tone
-    // chords, bass/slash variants) purely because they have more chances to pick
-    // up incidental harmonic/noise energy across bins that aren't really part of
-    // the chord being played (e.g. F13 shares all 3 notes of Dm plus 3 extra, so
-    // it can outscore Dm whenever those 3 extra bins have any stray energy).
-    // Dividing by each template's own norm removes that size bias.
-    // Extension-tone penalty: normalizing by template norm still isn't enough for
-    // chords like 9/11/13, because their "extra" notes often ARE the real harmonic
-    // overtones of notes already in a simpler chord (e.g. Bb's own 5th and flat-7th
-    // partials are F and Ab -- exactly the two "extra" notes Bb13 adds on top of a
-    // Gm triad's G/Bb/D). That energy is real, not noise, so norm alone can't tell
-    // the extended chord apart from harmonic bleed off the simpler one. Bias towards
-    // the simpler reading by discounting each chord tone beyond a triad.
-    vector<double> templateNorm(nChord, 1.0);
-    vector<double> extensionPenalty(nChord, 1.0);
+    // L2 norm per candidate template. Raw dot-product scoring favours templates with
+    // more populated bins (7th/9th/11th/13th chords, add-tone chords, bass/slash
+    // variants) purely because they have more chances to pick up incidental
+    // harmonic/noise energy across bins that aren't really part of the chord being
+    // played (e.g. F13 shares all 3 notes of Dm plus 3 extra, so it can outscore Dm
+    // whenever those 3 extra bins have any stray energy). Dividing by each template's
+    // own norm removes that size bias.
+    //
+    // The bass half and the treble half get their *own* norms, and are matched
+    // separately. Normalizing the stacked 24-bin template as one vector destroys
+    // inversion detection: C, C/E and C/G carry an identical treble template and
+    // differ only in the bass, so the treble part is common-mode and has to cancel
+    // out of the comparison -- but it only cancels if every candidate divides it by
+    // the same number. It doesn't. A slash template carries a 1.0 bass spike that a
+    // plain triad's template lacks, so it has the larger combined norm, so the shared
+    // treble energy (which dominates: the bass window dies above Bb3 while the treble
+    // window spans the whole range) is discounted more for the slash reading than for
+    // the plain one. That difference is far bigger than the bass difference it is
+    // supposed to be decided by, and it always points the same way, so every
+    // inversion was reported as its root-position chord. Splitting the norms makes
+    // the treble term genuinely identical across the three, leaving the bass as the
+    // sole discriminator -- which is the whole point of having bass bins.
+    //
+    // Note-count penalty, applied in both directions:
+    //  - beyond a triad: normalizing by template norm isn't enough for chords like
+    //    9/11/13, because their "extra" notes often ARE the real harmonic overtones
+    //    of notes already in a simpler chord (e.g. Bb's own 5th and flat-7th partials
+    //    are F and Ab -- exactly the two "extra" notes Bb13 adds on top of a Gm
+    //    triad's G/Bb/D). That energy is real, not noise, so norm alone can't tell the
+    //    extended chord apart from harmonic bleed off the simpler one.
+    //  - below a triad: the norm cuts the other way for the two-note power-chord ("5")
+    //    templates. Dropping the third shrinks the norm faster than it shrinks the dot
+    //    product, so C5 outscored a fully-voiced C major. Penalise thinner-than-triad
+    //    templates by the same factor so a "5" only wins when the third really is
+    //    absent.
+    vector<double> bassNorm(nChord, 1.0);
+    vector<double> trebleNorm(nChord, 1.0);
+    vector<double> noteCountPenalty(nChord, 1.0);
     for (int iChord = 0; iChord < nChord; iChord++) {
-        double bassWeight = (iChord == nChord - 1) ? 1.0 : bassBoost;
-        double sumSq = 0;
+        double bassSumSq = 0;
+        double trebleSumSq = 0;
         int noteCount = 0;
         for (int iBin = 0; iBin < 12; iBin++) {
-            double v = bassWeight * m_chorddict[24 * iChord + iBin];
-            sumSq += v * v;
+            double v = m_chorddict[24 * iChord + iBin];
+            bassSumSq += v * v;
         }
         for (int iBin = 12; iBin < 24; iBin++) {
             double v = m_chorddict[24 * iChord + iBin];
-            sumSq += v * v;
-            if (m_chorddict[24 * iChord + iBin] > 0) noteCount++;
+            trebleSumSq += v * v;
+            if (v > 0) noteCount++;
         }
-        if (sumSq > 0) templateNorm[iChord] = sqrt(sumSq);
+        if (bassSumSq > 0) bassNorm[iChord] = sqrt(bassSumSq);
+        if (trebleSumSq > 0) trebleNorm[iChord] = sqrt(trebleSumSq);
         if (iChord != nChord - 1 && noteCount > 3) {
-            extensionPenalty[iChord] = pow(0.93, noteCount - 3);
+            noteCountPenalty[iChord] = pow(0.93, noteCount - 3);
+        }
+        if (iChord != nChord - 1 && noteCount < 3) {
+            noteCountPenalty[iChord] = pow(0.93, 3 - noteCount);
         }
     }
     //
@@ -485,19 +515,17 @@ Chordino::getRemainingFeatures()
         vector<double> rawChordValue(nChord, 0.0);
 	        
         for (int iChord = 0; iChord < nChord; iChord++) {
-            tempchordvalue = 0;
-            // N's bass template is a diffuse 0.5 across all 12 bins (matches everything a
-            // little), unlike real chords' sparse single-bin template, so boosting it here
-            // too would make N win disproportionately more often than intended.
-            double bassWeight = (iChord == nChord - 1) ? 1.0 : bassBoost;
+            double bassMatch = 0;
+            double trebleMatch = 0;
             for (int iBin = 0; iBin < 12; iBin++) {
-                tempchordvalue += bassWeight * m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
+                bassMatch += m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
             for (int iBin = 12; iBin < 24; iBin++) {
-                tempchordvalue += m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
+                trebleMatch += m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
-            tempchordvalue /= templateNorm[iChord];
-            tempchordvalue *= extensionPenalty[iChord];
+            tempchordvalue = trebleMatch / trebleNorm[iChord]
+                + bassWeight * bassMatch / bassNorm[iChord];
+            tempchordvalue *= noteCountPenalty[iChord];
             if (iChord == nChord-1) tempchordvalue *= .7;
             if (tempchordvalue < 0) tempchordvalue = 0.0;
             if (tempchordvalue > 200.0) {
