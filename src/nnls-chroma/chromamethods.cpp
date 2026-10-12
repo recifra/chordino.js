@@ -241,6 +241,9 @@ static vector<string> staticChordnames() {
     // template to win: the closest reading available was the root-position chord.
     chordnames.push_back("m");//=0,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0
     chordnames.push_back("m");//=0,0,0,0,0,0,0,1,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0
+    // Dominant 7th with the 7th in the bass (D7/C, G7/F): the usual passing chord
+    // into the next chord's first inversion, which had no template at all.
+    chordnames.push_back("7");//=0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,1,0,0,1,0
 	// from here: Harte syntax
     chordnames.push_back("");//=1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
     chordnames.push_back("");// =0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0,0,0
@@ -275,6 +278,7 @@ static vector<string> staticChordnames() {
     chordnames.push_back(":13");
     chordnames.push_back(":min");
     chordnames.push_back(":min");
+    chordnames.push_back(":7");
     return chordnames;
 }
 
@@ -322,7 +326,9 @@ static vector<float> staticChordvalues() {
     // m with b3 in the bass (Am/C, Dm/F)
     0,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0,
     // m with 5th in the bass (Am/E, Dm/A)
-    0,0,0,0,0,0,0,1,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0};
+    0,0,0,0,0,0,0,1,0,0,0,0,1,0,0,1,0,0,0,1,0,0,0,0,
+    // 7 with b7 in the bass (D7/C, G7/F)
+    0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,1,0,0,1,0};
     const int nChordType = sizeof(chordvaluearray) / sizeof(chordvaluearray[0]) / 24;
     for (int iChord = 0; iChord < nChordType; ++iChord) {
         for (int iNote = 0; iNote < 24; iNote++) {
