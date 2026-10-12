@@ -1,6 +1,8 @@
 // Drop an audio file, let the worker precompute Chordino's per-frame bins, then
 // play it: every panel scrolls under a fixed playhead driven by audio.currentTime,
-// so pause and seek need no extra handling.
+// so pause and seek need no extra handling. A chord JSON (same shape as
+// test/fixtures/training.json) dropped with it, or later, is shown as the
+// expected chords and graded against the detected ones.
 
 const SAMPLE_RATE = 44100;
 // Left margin of every canvas, where bin labels go.
@@ -8,7 +10,8 @@ const GUTTER = 72;
 // Width of each prerendered heatmap tile; keeps long recordings under the
 // browsers' canvas size limits.
 const TILE_FRAMES = 4096;
-const LANE_HEIGHT = 40;
+const BAND = 24;
+const STRIP = 5;
 const TICK_BAND = 14;
 // A chord the Viterbi path never takes still gets a salience row when it wins
 // at least this many frames on its own.
@@ -32,7 +35,7 @@ const PANELS = [
   {
     id: 'chordsalience',
     title: 'Chord salience',
-    note: 'after the confidence gate (Viterbi input), normalized per frame; italic = frame winner the path never takes',
+    note: 'after the confidence gate (Viterbi input), normalized per frame; ▸ = expected chord, blue = expected but never on the path, italic = frame winner the path never takes',
     rowHeight: 14,
   },
   {
@@ -52,10 +55,15 @@ const chordText = $('chord');
 const timeText = $('time');
 const candidates = $('candidates');
 const windowSelect = $('window');
+const expectedBox = $('expected');
+const expectedChord = $('expected-chord');
+const scoreText = $('score');
+const expectedFile = $('expected-file');
 
 const LUT = buildLut([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]);
 
 let view = null;
+let expected = null;
 let worker = null;
 let audioUrl = null;
 let theme = readTheme();
@@ -70,10 +78,8 @@ const panels = PANELS.map(createPanel);
 // --- loading -----------------------------------------------------------------
 
 $('file').addEventListener('change', (event) => {
-  const [file] = event.target.files;
-  if (file) {
-    load(file);
-  }
+  openFiles([...event.target.files]);
+  event.target.value = '';
 });
 
 const overlay = $('drop-overlay');
@@ -89,12 +95,27 @@ document.addEventListener('dragleave', (event) => {
 document.addEventListener('drop', (event) => {
   event.preventDefault();
   overlay.hidden = true;
-  const file = [...event.dataTransfer.files].find((f) => f.type.startsWith('audio/') || f.type.startsWith('video/')) ??
-    event.dataTransfer.files[0];
-  if (file) {
-    load(file);
-  }
+  openFiles([...event.dataTransfer.files]);
 });
+
+$('clear-expected').addEventListener('click', () => {
+  expected = null;
+  expectedFile.hidden = true;
+  refreshExpected();
+});
+
+/** Audio and chord JSON can come together or one at a time, in any order. */
+function openFiles(files) {
+  const isJson = (file) => file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
+  const media = files.find((file) => !isJson(file));
+  const json = files.find(isJson);
+  if (media) {
+    load(media);
+  }
+  if (json) {
+    loadExpected(json);
+  }
+}
 
 async function load(file) {
   worker?.terminate();
@@ -138,6 +159,7 @@ async function load(file) {
         return;
       }
       view = buildView(data.analysis);
+      refreshExpected();
       const seconds = ((performance.now() - started) / 1000).toFixed(1);
       setStatus(`${file.name} · ${formatTime(view.duration)} · ${view.frames} frames · ` +
         `${view.segments.length - 1} chords · analyzed in ${seconds} s`);
@@ -164,6 +186,40 @@ async function decode(file) {
   return mono;
 }
 
+async function loadExpected(file) {
+  expectedFile.hidden = false;
+  try {
+    expected = { name: file.name, segments: parseExpected(JSON.parse(await file.text())) };
+    $('expected-name').textContent = `Expected: ${file.name} (${expected.segments.length} marks)`;
+  } catch (err) {
+    expected = null;
+    $('expected-name').textContent = `Could not read ${file.name}: ${err.message}`;
+  }
+  refreshExpected();
+}
+
+// {"timestamps": [[chord, seconds], ...]} as in test/fixtures/training.json, where
+// "" is no chord (it closes the last one); getResult()'s [{chord, time}] works too.
+function parseExpected(data) {
+  const entries = Array.isArray(data) ? data : data?.timestamps;
+  if (!Array.isArray(entries)) {
+    throw new Error('expected {"timestamps": [[chord, seconds], ...]}');
+  }
+  const marks = entries
+    .map((entry) => (Array.isArray(entry) ? { chord: entry[0], time: entry[1] } : entry))
+    .sort((a, b) => a.time - b.time);
+  for (const mark of marks) {
+    if (typeof mark?.chord !== 'string' || !Number.isFinite(mark.time)) {
+      throw new Error(`bad entry ${JSON.stringify(mark)}`);
+    }
+  }
+  return marks.map((mark, i) => ({
+    chord: mark.chord || 'N',
+    start: mark.time,
+    end: i + 1 < marks.length ? marks[i + 1].time : Infinity,
+  }));
+}
+
 function setStatus(text, value) {
   statusText.textContent = text;
   progress.hidden = value === undefined;
@@ -188,19 +244,98 @@ function buildView(analysis) {
     end: i + 1 < chords.length ? chords[i + 1].time : duration,
   }));
 
-  const sources = {
-    chroma: chromaLayout(analysis.chroma),
-    smoothedchroma: chromaLayout(analysis.smoothedchroma),
-    chordsalience: salienceLayout(salience, chords),
-    semitonespectrum: semitoneLayout(analysis.semitonespectrum),
-  };
-  for (const panel of panels) {
-    const layout = sources[panel.id];
-    panel.rows = layout.rows;
-    panel.separators = layout.separators ?? [];
-    panel.tiles = buildTiles(layout.bins, layout.rows, layout.groups, panel.gamma ?? 1);
+  const labelByKey = new Map();
+  salience.binNames.forEach((label, i) => {
+    const { id } = chordKey(label);
+    if (!labelByKey.has(id)) {
+      labelByKey.set(id, i);
+    }
+  });
+
+  // Chord salience is laid out by refreshExpected(), since its rows depend on the expected chords
+  applyLayout(panelById('chroma'), chromaLayout(analysis.chroma));
+  applyLayout(panelById('smoothedchroma'), chromaLayout(analysis.smoothedchroma));
+  applyLayout(panelById('semitonespectrum'), semitoneLayout(analysis.semitonespectrum));
+  return { frames, frameRate, duration, chords, segments, salience, labelByKey, comparison: null };
+}
+
+/** Grades the detected chords against the expected ones and relays out the salience rows. */
+function refreshExpected() {
+  lastKey = '';
+  lastFrame = -1;
+  expectedBox.hidden = !expected;
+  if (!view) {
+    return;
   }
-  return { frames, frameRate, duration, segments, salience };
+  view.comparison = expected ? compare(view.segments, expected.segments, view.duration) : null;
+  applyLayout(panelById('chordsalience'), salienceLayout(view, expected?.segments ?? []));
+  scoreText.textContent = view.comparison
+    ? `exact ${formatPercent(view.comparison.exact)} · root ${formatPercent(view.comparison.root)}`
+    : '';
+}
+
+function panelById(id) {
+  return panels.find((panel) => panel.id === id);
+}
+
+function applyLayout(panel, layout) {
+  panel.rows = layout.rows;
+  panel.separators = layout.separators ?? [];
+  panel.tiles = buildTiles(layout.bins, layout.rows, layout.groups, panel.gamma ?? 1);
+}
+
+const NATURALS = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+function pitchClass(name) {
+  let pitch = NATURALS[name[0]];
+  for (const accidental of name.slice(1)) {
+    pitch += accidental === '#' ? 1 : -1;
+  }
+  return (pitch + 12) % 12;
+}
+
+/** Spelling-independent identity of a label: G#º = Abº, C/C = C, "" = N. */
+function chordKey(label) {
+  const match = /^([A-G][#b]*)([^/]*)(?:\/([A-G][#b]*))?$/.exec(label);
+  if (!match) {
+    return { root: null, id: label || 'N' };
+  }
+  const root = pitchClass(match[1]);
+  const bass = match[3] ? pitchClass(match[3]) : root;
+  return { root, id: `${root}${match[2]}/${bass}` };
+}
+
+/** exact: same chord; root: same root, other quality or bass; miss: anything else. */
+function grade(detected, wanted) {
+  const got = chordKey(detected);
+  const want = chordKey(wanted);
+  if (got.id === want.id) {
+    return 'exact';
+  }
+  return got.root !== null && got.root === want.root ? 'root' : 'miss';
+}
+
+/** Overlaps of detected and expected segments, graded, plus time-weighted scores. */
+function compare(detected, wanted, duration) {
+  const intervals = [];
+  const totals = { exact: 0, root: 0, miss: 0 };
+  for (const want of wanted) {
+    for (const got of detected) {
+      const start = Math.max(want.start, got.start);
+      const end = Math.min(want.end, got.end, duration);
+      if (start < end) {
+        const result = grade(got.chord, want.chord);
+        intervals.push({ start, end, result });
+        totals[result] += end - start;
+      }
+    }
+  }
+  const total = totals.exact + totals.root + totals.miss;
+  return {
+    intervals,
+    exact: total > 0 ? totals.exact / total : 0,
+    root: total > 0 ? (totals.exact + totals.root) / total : 0,
+  };
 }
 
 // Chroma bins are A-based, bass in 0-11 and treble in 12-23. Treble is drawn on
@@ -239,9 +374,9 @@ function aggregateSalience(bins) {
   return { binCount: labels.length, binNames: labels, values };
 }
 
-// Rows: chords on the Viterbi path in order of appearance, then labels that win
-// frames on their own without the path ever taking them, then N.
-function salienceLayout(bins, chords) {
+// Rows: chords on the Viterbi path in order of appearance, then expected chords
+// the path never takes, then labels that win frames on their own, then N.
+function salienceLayout({ salience: bins, chords, labelByKey }, wanted) {
   const { binCount, binNames, values } = bins;
   const frames = values.length / binCount;
   const wins = new Map();
@@ -255,13 +390,19 @@ function salienceLayout(bins, chords) {
     wins.set(best, (wins.get(best) ?? 0) + 1);
   }
   const onPath = [...new Set(chords.map((item) => item.chord))].filter((chord) => chord !== 'N');
+  // Expected chords spelled the way the dictionary does; ones it has no template for are left out
+  const expectedOnly = [...new Set(wanted.map((segment) => labelByKey.get(chordKey(segment.chord).id)))]
+    .filter((label) => label !== undefined && binNames[label] !== 'N' && !onPath.includes(binNames[label]))
+    .map((label) => binNames[label]);
   const extra = [...wins]
-    .filter(([label, count]) => count >= MIN_FRAME_WINS && binNames[label] !== 'N' && !onPath.includes(binNames[label]))
+    .filter(([label, count]) => count >= MIN_FRAME_WINS && binNames[label] !== 'N' &&
+      !onPath.includes(binNames[label]) && !expectedOnly.includes(binNames[label]))
     .sort((a, b) => b[1] - a[1])
     .slice(0, MAX_EXTRA_ROWS)
     .map(([label]) => binNames[label]);
   const rows = [
     ...onPath.map((label) => ({ bin: binNames.indexOf(label), label })),
+    ...expectedOnly.map((label) => ({ bin: binNames.indexOf(label), label, expectedOnly: true })),
     ...extra.map((label) => ({ bin: binNames.indexOf(label), label, offPath: true })),
     { bin: binNames.indexOf('N'), label: 'N' },
   ];
@@ -320,7 +461,8 @@ function buildLut(stops) {
 function createLane() {
   const section = document.createElement('section');
   section.className = 'panel';
-  section.innerHTML = '<h2>Chords <small>Viterbi path; click any panel to seek</small></h2>';
+  section.innerHTML = '<h2>Chords <small>Viterbi path, and the expected chords when a JSON is loaded; ' +
+    'click any panel to seek</small></h2>';
   const canvas = document.createElement('canvas');
   section.append(canvas);
   $('panels').append(section);
@@ -402,7 +544,11 @@ function readTheme() {
   return {
     fg: read('--fg'),
     muted: read('--muted'),
+    accent: read('--accent'),
     accentSoft: read('--accent-soft'),
+    exact: read('--ok'),
+    root: read('--warn'),
+    miss: read('--bad'),
     laneA: read('--lane-a'),
     laneB: read('--lane-b'),
     empty: read('--plot-empty'),
@@ -472,54 +618,74 @@ function timeScale(area, time) {
 }
 
 function drawLane(time) {
-  const area = fit(lane.canvas, LANE_HEIGHT);
+  const { comparison } = view;
+  const bands = comparison ? 2 * BAND + STRIP : BAND;
+  const area = fit(lane.canvas, bands + TICK_BAND);
   const { context, width, height } = area;
   const { pxPerSec, start, x } = timeScale(area, time);
-  const band = height - TICK_BAND;
 
   context.save();
   context.beginPath();
   context.rect(GUTTER, 0, area.plotWidth, height);
   context.clip();
-  context.font = '600 13px system-ui, sans-serif';
-  context.textBaseline = 'middle';
-  view.segments.forEach((segment, i) => {
-    const x0 = x(segment.start);
-    const x1 = x(segment.end);
-    if (x1 < GUTTER || x0 > width) {
-      return;
+  drawSegments(context, view.segments, 0, x, time, width);
+  if (comparison) {
+    for (const interval of comparison.intervals) {
+      const x0 = x(interval.start);
+      const x1 = x(interval.end);
+      if (x1 >= GUTTER && x0 <= width) {
+        context.fillStyle = theme[interval.result];
+        context.fillRect(x0, BAND + 1, x1 - x0, STRIP - 2);
+      }
     }
-    const current = segment.start <= time && time < segment.end;
-    context.fillStyle = current ? theme.accentSoft : i % 2 ? theme.laneB : theme.laneA;
-    context.fillRect(x0, 0, x1 - x0, band);
-    const label = segment.chord;
-    const labelWidth = context.measureText(label).width;
-    // Keep the label of a chord that started off-screen pinned to the left edge
-    const labelX = Math.min(Math.max(x0, GUTTER) + 4, x1 - labelWidth - 4);
-    if (labelX >= Math.max(x0, GUTTER) + 2) {
-      context.fillStyle = label === 'N' ? theme.muted : theme.fg;
-      context.fillText(label, labelX, band / 2);
-    }
-  });
+    drawSegments(context, expected.segments, BAND + STRIP, x, time, width);
+  }
 
   context.font = '10px system-ui, sans-serif';
+  context.textBaseline = 'middle';
   context.fillStyle = theme.muted;
   const labelEvery = pxPerSec >= 60 ? 1 : pxPerSec >= 25 ? 2 : 5;
   for (let second = Math.ceil(Math.max(start, 0)); second <= Math.min(start + windowSec, view.duration); second++) {
-    context.fillRect(x(second), band, 1, second % labelEvery === 0 ? 6 : 3);
+    context.fillRect(x(second), bands, 1, second % labelEvery === 0 ? 6 : 3);
     if (second % labelEvery === 0) {
-      context.fillText(formatTime(second, 0), x(second) + 3, band + 9);
+      context.fillText(formatTime(second, 0), x(second) + 3, bands + 9);
     }
   }
   context.restore();
 
   context.font = '11px system-ui, sans-serif';
   context.fillStyle = theme.muted;
-  context.textBaseline = 'middle';
   context.textAlign = 'right';
-  context.fillText('chord', GUTTER - 6, band / 2);
+  context.fillText(comparison ? 'detected' : 'chord', GUTTER - 6, BAND / 2);
+  if (comparison) {
+    context.fillText('expected', GUTTER - 6, BAND + STRIP + BAND / 2);
+  }
   context.textAlign = 'left';
   drawPlayhead(context, area);
+}
+
+function drawSegments(context, segments, top, x, time, width) {
+  context.font = '600 13px system-ui, sans-serif';
+  context.textBaseline = 'middle';
+  segments.forEach((segment, i) => {
+    const end = Math.min(segment.end, view.duration);
+    const x0 = x(segment.start);
+    const x1 = x(end);
+    if (x1 <= x0 || x1 < GUTTER || x0 > width) {
+      return;
+    }
+    const current = segment.start <= time && time < end;
+    context.fillStyle = current ? theme.accentSoft : i % 2 ? theme.laneB : theme.laneA;
+    context.fillRect(x0, top, x1 - x0, BAND);
+    const label = segment.chord;
+    const labelWidth = context.measureText(label).width;
+    // Keep the label of a chord that started off-screen pinned to the left edge
+    const labelX = Math.min(Math.max(x0, GUTTER) + 4, x1 - labelWidth - 4);
+    if (labelX >= Math.max(x0, GUTTER) + 2) {
+      context.fillStyle = label === 'N' ? theme.muted : theme.fg;
+      context.fillText(label, labelX, top + BAND / 2);
+    }
+  });
 }
 
 function drawPanel(panel, time) {
@@ -553,13 +719,19 @@ function drawPanel(panel, time) {
   context.textAlign = 'right';
   context.textBaseline = 'middle';
   const fontSize = Math.min(11, Math.max(9, panel.rowHeight - 2));
+  const marked = panel.id === 'chordsalience' ? expectedLabelAt(time) : undefined;
   panel.rows.forEach((row, y) => {
     if (!row.label) {
       return;
     }
-    context.font = `${row.offPath ? 'italic ' : ''}${fontSize}px system-ui, sans-serif`;
-    context.fillStyle = row.offPath || row.label === 'N' ? theme.muted : theme.fg;
-    context.fillText(row.label, GUTTER - 6, (y + 0.5) * panel.rowHeight);
+    const middle = (y + 0.5) * panel.rowHeight;
+    context.font = `${row.offPath ? 'italic ' : ''}${row.bin === marked ? '700 ' : ''}${fontSize}px system-ui, sans-serif`;
+    context.fillStyle = row.expectedOnly ? theme.accent : row.offPath || row.label === 'N' ? theme.muted : theme.fg;
+    context.fillText(row.label, GUTTER - 6, middle);
+    if (row.bin === marked) {
+      context.fillStyle = theme.accent;
+      context.fillText('▸', 12, middle);
+    }
   });
   context.textAlign = 'left';
   drawPlayhead(context, area);
@@ -572,10 +744,25 @@ function drawPlayhead(context, area) {
 
 // --- readout ---------------------------------------------------------------------
 
+function expectedAt(time) {
+  return expected?.segments.find((segment) => segment.start <= time && time < segment.end);
+}
+
+/** Salience label of the expected chord at `time`, if the dictionary has it. */
+function expectedLabelAt(time) {
+  const segment = expectedAt(time);
+  return segment && view.labelByKey.get(chordKey(segment.chord).id);
+}
+
 function updateNow(time) {
   timeText.textContent = `${formatTime(time)} / ${formatTime(view.duration)}`;
   const segment = view.segments.findLast((item) => item.start <= time);
   chordText.textContent = segment ? segment.chord : '–';
+  if (expected) {
+    const want = expectedAt(time);
+    expectedChord.textContent = want ? want.chord : '–';
+    expectedChord.className = want && segment ? grade(segment.chord, want.chord) : '';
+  }
 
   const frame = Math.min(Math.floor(time * view.frameRate), view.frames - 1);
   if (frame === lastFrame) {
@@ -606,9 +793,16 @@ function updateNow(time) {
 
 function clearNow() {
   chordText.textContent = '–';
+  expectedChord.textContent = '–';
+  expectedChord.className = '';
+  scoreText.textContent = '';
   timeText.textContent = '';
   candidates.replaceChildren();
   lastFrame = -1;
+}
+
+function formatPercent(value) {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function formatTime(seconds, digits = 1) {
