@@ -744,7 +744,7 @@ function updateNow(time) {
   const { binCount, binNames, values } = view.salience;
   const row = values.subarray(frame * binCount, (frame + 1) * binCount);
   const top = [...row.keys()].sort((a, b) => row[b] - row[a]).slice(0, 5);
-  // Salience is spread over ~250 labels, so bars are scaled to the winner
+  // Similar labels split the weight between them, so bars are scaled to the winner
   const best = row[top[0]] || 1;
   candidates.replaceChildren(...top.map((label) => {
     const item = document.createElement('li');

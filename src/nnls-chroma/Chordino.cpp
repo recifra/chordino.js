@@ -60,6 +60,14 @@ const double minChordVsNoChord = 1.05;
 const double minRootMargin = 1.05;
 // How hard a frame that fails the gate is pushed towards N.
 const double noConfidenceDamping = 0.01;
+// How peaked the per-frame chord distribution handed to the Viterbi decoder is:
+// salience = salienceBase^score. Upstream used 1.3, which spread each frame over
+// the ~400 templates so evenly that the right chord led its neighbours by about
+// 0.25 nat per frame, while entering and leaving a chord costs the decoder about
+// 20 nat. A chord had to last ~2 s to pay for that, so changes under a couple of
+// seconds were smoothed away even where the chroma clearly moved. 1.3^4: the
+// gain levels off there, sharper only splits chords into more segments.
+const double salienceBase = 2.8561;
 
 Chordino::Chordino(float inputSampleRate) :
     NNLSBase(inputSampleRate),
@@ -577,7 +585,7 @@ Chordino::getRemainingFeatures()
                 tempchordvalue = 200.0;
             }
             rawChordValue[iChord] = tempchordvalue;
-            tempchordvalue = pow(1.3, tempchordvalue);
+            tempchordvalue = pow(salienceBase, tempchordvalue);
             sumchordvalue += tempchordvalue;
             currentChordSalience.push_back(tempchordvalue);
         }

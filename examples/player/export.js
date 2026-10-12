@@ -139,7 +139,7 @@ function readme({ audioName, expected, step, templates }) {
     `bass / treble: mean NNLS chroma over the record, the two halves the chord templates are matched against, each scaled to its own strongest pitch class (1), weaker than ${CHROMA_FLOOR} left out, strongest first. {} = silence.`,
     'level: chroma energy relative to the median frame of the song; near 0 = silence or very quiet.',
     'gated: share of frames the confidence gate rejected and pushed towards N, by reason: vsN = the best chord did not beat the no-chord template by the required margin, rootMargin = a chord on another root scored too close to it. Absent when no frame was rejected.',
-    `top: the ${TOP_CHORDS} most probable chord labels with their mean probability over the record. This is the matcher's per-frame distribution over ${templates} templates (summed per label) after its confidence gate, i.e. what the Viterbi decoder receives. It is flat by design, so read the values relative to each other; a frame that fails the gate puts nearly all weight on N.`,
+    `top: the ${TOP_CHORDS} most probable chord labels with their mean probability over the record. This is the matcher's per-frame distribution over ${templates} templates (summed per label) after its confidence gate, i.e. what the Viterbi decoder receives. Similar chords (inversions, sus, add) share most of the weight, so read the values relative to each other; a frame that fails the gate puts nearly all weight on N.`,
     ...(expected ? [
       'expectedRank / expectedP: rank (1 = most probable) and mean probability of the expected chord; null when the dictionary has no template for it.',
     ] : []),
