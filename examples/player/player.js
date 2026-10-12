@@ -4,7 +4,7 @@
 // test/fixtures/training.json) dropped with it, or later, is shown as the
 // expected chords and graded against the detected ones.
 
-import { chordKey, grade, segmentAt } from './chords.js';
+import { chordKey, compare, grade, parseExpected, segmentAt } from './chords.js';
 import { buildExport } from './export.js';
 
 const SAMPLE_RATE = 44100;
@@ -216,28 +216,6 @@ async function loadExpected(file) {
   refreshExpected();
 }
 
-// {"timestamps": [[chord, seconds], ...]} as in test/fixtures/training.json, where
-// "" is no chord (it closes the last one); getResult()'s [{chord, time}] works too.
-function parseExpected(data) {
-  const entries = Array.isArray(data) ? data : data?.timestamps;
-  if (!Array.isArray(entries)) {
-    throw new Error('expected {"timestamps": [[chord, seconds], ...]}');
-  }
-  const marks = entries
-    .map((entry) => (Array.isArray(entry) ? { chord: entry[0], time: entry[1] } : entry))
-    .sort((a, b) => a.time - b.time);
-  for (const mark of marks) {
-    if (typeof mark?.chord !== 'string' || !Number.isFinite(mark.time)) {
-      throw new Error(`bad entry ${JSON.stringify(mark)}`);
-    }
-  }
-  return marks.map((mark, i) => ({
-    chord: mark.chord || 'N',
-    start: mark.time,
-    end: i + 1 < marks.length ? marks[i + 1].time : Infinity,
-  }));
-}
-
 function setStatus(text, value) {
   statusText.textContent = text;
   progress.hidden = value === undefined;
@@ -311,29 +289,6 @@ function applyLayout(panel, layout) {
   panel.rows = layout.rows;
   panel.separators = layout.separators ?? [];
   panel.tiles = buildTiles(layout.bins, layout.rows, layout.groups, panel.gamma ?? 1);
-}
-
-/** Overlaps of detected and expected segments, graded, plus time-weighted scores. */
-function compare(detected, wanted, duration) {
-  const intervals = [];
-  const totals = { exact: 0, root: 0, miss: 0 };
-  for (const want of wanted) {
-    for (const got of detected) {
-      const start = Math.max(want.start, got.start);
-      const end = Math.min(want.end, got.end, duration);
-      if (start < end) {
-        const result = grade(got.chord, want.chord);
-        intervals.push({ start, end, result, expected: want.chord, detected: got.chord });
-        totals[result] += end - start;
-      }
-    }
-  }
-  const total = totals.exact + totals.root + totals.miss;
-  return {
-    intervals,
-    exact: total > 0 ? totals.exact / total : 0,
-    root: total > 0 ? (totals.exact + totals.root) / total : 0,
-  };
 }
 
 // Chroma bins are A-based, bass in 0-11 and treble in 12-23. Treble is drawn on
