@@ -85,6 +85,29 @@ describe('offline extraction', () => {
     assert.deepEqual(new Set(labels(result)), new Set(['N']));
   });
 
+  test('setProgressCallback reports getResult from 0 to 1 without changing it', async () => {
+    const { Module } = chordino;
+    const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
+    const plain = detectChords(chordino, samples, sampleRate);
+    const reports = [];
+    Module.setProgressCallback((done) => reports.push(done));
+    try {
+      assert.deepEqual(detectChords(chordino, samples, sampleRate), plain);
+    } finally {
+      Module.setProgressCallback(null);
+    }
+
+    assert.equal(reports[0], 0);
+    assert.equal(reports.at(-1), 1);
+    assert.ok(reports.length > 10, `only ${reports.length} reports`);
+    for (let i = 1; i < reports.length; i++) {
+      assert.ok(reports[i] > reports[i - 1], `progress goes back at ${i}: ${reports}`);
+    }
+    const count = reports.length;
+    detectChords(chordino, samples, sampleRate);
+    assert.equal(reports.length, count, 'null turns the reports off');
+  });
+
   test('resetProcess drops the audio fed before it', () => {
     const { Module } = chordino;
     const instance = Module.initializePlugin(SAMPLE_RATE, 4096);

@@ -53,6 +53,11 @@ protected:
     vector<string> m_chordnames;
 };
 
+// Progress of getRemainingFeatures(), which does nearly all of the work in one
+// call (seconds for a whole song): called with done rising from 0 to 1. Null by
+// default, which reports nothing. A free function pointer rather than a member so
+// the plugin class keeps its signature; src/chordextract.cpp sets it.
+extern void (*chordinoProgress)(double done);
 
 
 #endif

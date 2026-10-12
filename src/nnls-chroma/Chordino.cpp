@@ -29,6 +29,13 @@
 #include <algorithm>
 
 const bool debug_on = false;
+// Where each stage of getRemainingFeatures ends on the 0-1 scale chordinoProgress
+// reports, in proportion to the time it takes (measured on a 5 minute song) so the
+// progress moves at a steady pace: tuning, NNLS chroma (nearly all of it), chord
+// salience, then the Viterbi decode and the output features.
+const double progressTuning = 0.02;
+const double progressChroma = 0.94;
+const double progressSalience = 0.98;
 // Relative weight of the bass half of the match against the treble half. The two
 // halves are normalized independently (see below), so this is the only thing setting
 // how much say the bass note has; it is a plain ratio between two comparable
@@ -68,6 +75,8 @@ const double noConfidenceDamping = 0.01;
 // seconds were smoothed away even where the chroma clearly moved. 1.3^4: the
 // gain levels off there, sharper only splits chords into more segments.
 const double salienceBase = 2.8561;
+
+void (*chordinoProgress)(double done) = nullptr;
 
 Chordino::Chordino(float inputSampleRate) :
     NNLSBase(inputSampleRate),
@@ -227,6 +236,11 @@ Chordino::getRemainingFeatures()
     if (m_logSpectrum.size() == 0) return fsOut;
     int nChord = m_chordnames.size();
 
+    // Reports frame of nFrame through a stage spanning from-to on the 0-1 scale
+    auto report = [](double from, double to, int frame, int nFrame) {
+        if (chordinoProgress) chordinoProgress(from + (to - from) * frame / nFrame);
+    };
+
     // L2 norm per candidate template. Raw dot-product scoring favours templates with
     // more populated bins (7th/9th/11th/13th chords, add-tone chords, bass/slash
     // variants) purely because they have more chances to pick up incidental
@@ -321,6 +335,7 @@ Chordino::getRemainingFeatures()
     
     vector<Vamp::RealTime> timestamps;
 
+    report(0, progressTuning, 0, nFrame);
     for (FeatureList::iterator i = m_logSpectrum.begin(); i != m_logSpectrum.end(); ++i) {
         Feature currentLogSpectrum = *i;
         Feature currentTunedSpec; // tuned log-frequency spectrum
@@ -362,6 +377,7 @@ Chordino::getRemainingFeatures()
         }
         tunedSpec.push_back(currentTunedSpec);
         count++;
+        report(0, progressTuning, count, nFrame);
     }
     if (debug_on) cerr << "done." << endl;
 	    
@@ -519,6 +535,7 @@ Chordino::getRemainingFeatures()
         inspectSemitones.push_back(vector<float>(semitones, semitones + 84));
 #endif
         count++;
+        report(progressTuning, progressChroma, count, nFrame);
     }
 
     // Smoothed copy of the chroma used only for chord matching (see chromaEmaAlpha
@@ -654,6 +671,7 @@ Chordino::getRemainingFeatures()
                              frameChromas.values,
                              smoothedChroma, currentChordSalience, inspectSemitones[iFrame].data(), gate);
 #endif
+        report(progressChroma, progressSalience, iFrame + 1, nFrame);
     }
     if (debug_on) cerr << "done." << endl;
 		
@@ -768,5 +786,6 @@ Chordino::getRemainingFeatures()
     
     // for (int iFrame = 0; iFrame < nFrame; iFrame++) cerr << fsOut[m_outputHarmonicChange][iFrame].values[0] << endl;
     
+    report(progressSalience, 1, 1, 1);
     return fsOut;     
 }

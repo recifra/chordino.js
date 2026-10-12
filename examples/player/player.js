@@ -167,8 +167,6 @@ async function load(file) {
     }
     if (data.type === 'progress') {
       setStatus(`Analyzing ${file.name}… ${Math.round(data.value * 100)}%`, data.value);
-    } else if (data.type === 'decoding') {
-      setStatus(`Estimating chords for ${file.name}…`, null);
     } else if (data.type === 'done') {
       current.terminate();
       worker = null;
@@ -187,6 +185,16 @@ async function load(file) {
       worker = null;
       setStatus(`Analysis failed: ${data.message}`);
     }
+  };
+  // A worker that fails to load or aborts posts nothing, which left the page loading forever
+  current.onerror = (event) => {
+    event.preventDefault();
+    if (current !== worker) {
+      return;
+    }
+    current.terminate();
+    worker = null;
+    setStatus(`Analysis failed: ${event.message || 'could not run analyzer-worker.js'}`);
   };
   current.postMessage({ samples, sampleRate: SAMPLE_RATE }, [samples.buffer]);
 }

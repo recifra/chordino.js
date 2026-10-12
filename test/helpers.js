@@ -14,6 +14,7 @@ export const paths = {
   chordino: path.join(root, 'examples/extract/chordino.js'),
   inspect: path.join(root, 'examples/player/chordino-inspect.js'),
   processor: path.join(root, 'examples/realtime/chordino-processor.js'),
+  worker: path.join(root, 'examples/extract/chordino-worker.js'),
   chordsMp3: path.join(root, 'test/fixtures/chords.mp3'),
 };
 
@@ -51,7 +52,7 @@ function mixDown(channels) {
   return mono;
 }
 
-/** Same feeding loop as examples/extract/index.html; `read` gets the instance once everything is fed. */
+/** Same feeding loop as examples/extract/chord-worker.js; `read` gets the instance once everything is fed. */
 function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 4096, instance } = {}) {
   const pBuffer = Module._malloc(bufferSize * Float32Array.BYTES_PER_ELEMENT);
   const ownInstance = instance === undefined;
@@ -159,6 +160,19 @@ export function loadProcessor(file, sampleRate) {
   Object.defineProperty(globalThis, 'currentTime', { get: () => clock.currentTime, configurable: true });
   loadScript(file);
   return { registered, clock };
+}
+
+/**
+ * Loads a Web Worker bundle with the postMessage global it uses and returns what
+ * it posts plus `send`, which delivers a message the way worker.postMessage
+ * would. Like loadProcessor, the globals go on globalThis.
+ */
+export function loadWorker(file) {
+  const messages = [];
+  globalThis.postMessage = (data) => messages.push(data);
+  loadScript(file);
+  // The bundle's top-level `onmessage = ...` lands on globalThis, as in a worker
+  return { messages, send: (data) => globalThis.onmessage({ data }) };
 }
 
 export const RENDER_QUANTUM = 128;

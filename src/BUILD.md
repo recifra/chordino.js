@@ -28,8 +28,15 @@ emcc --bind -O3 \
 
 ```sh
 cp chordino.js ../examples/extract/chordino.js
+cat chordino.js ../examples/extract/chord-worker.js > ../examples/extract/chordino-worker.js
 cat chordino.js ../examples/realtime/chord-processor.js > ../examples/realtime/chordino-processor.js
 ```
+
+`chordino-worker.js` detects the chords of a whole recording in a Web Worker,
+posting its progress and then the chords in the `test/fixtures/training.json`
+format; `examples/extract/index.html` shows how to drive it. `getResult` does
+nearly all of the work in one call, so `setProgressCallback(fn)` has it call `fn`
+with its progress (0 to 1) while it runs; `null` turns that off.
 
 ## Inspect build (examples/player)
 The player in `examples/player` visualizes the per-frame bins Chordino computes

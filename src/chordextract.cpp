@@ -10,6 +10,7 @@
 #include <emscripten/emscripten.h>
 #include <emscripten/bind.h>
 #include <stdlib.h>
+#include <cmath>
 
 using namespace std;
 using namespace Vamp;
@@ -17,6 +18,32 @@ using namespace Vamp::HostExt;
 
 int main() {
     return 0;
+}
+
+namespace {
+
+// See setProgressCallback
+emscripten::val progressCallback = emscripten::val::null();
+int reportedPercent = -1;
+
+void forwardProgress(double done) {
+    // Chordino reports every frame; JS only hears about whole percents
+    int percent = (int) floor(done * 100);
+    if (percent == reportedPercent) return;
+    reportedPercent = percent;
+    progressCallback(done);
+}
+
+}
+
+// Sets the function getResult() calls with its progress, from 0 to 1, while it
+// works through the buffered audio; null or undefined stops the reports. Feeding
+// the audio is quick in comparison, the caller can report that part itself.
+void setProgressCallback(emscripten::val callback) {
+    bool enabled = !callback.isNull() && !callback.isUndefined();
+    progressCallback = enabled ? callback : emscripten::val::null();
+    reportedPercent = -1;
+    chordinoProgress = enabled ? &forwardProgress : nullptr;
 }
 
 uintptr_t initializePlugin(
@@ -98,4 +125,5 @@ EMSCRIPTEN_BINDINGS(chordextract) {
     emscripten::function("resetProcess", &resetProcess);
     emscripten::function("processBuffer", &processBuffer);
     emscripten::function("getResult", &getResult);
+    emscripten::function("setProgressCallback", &setProgressCallback);
 }

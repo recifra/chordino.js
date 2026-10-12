@@ -1,49 +1,135 @@
-<button id="btn-start">Detect Chords</button>
-<input type="text" id="mp3-url" placeholder="Enter MP3 URL" value="chords.mp3">
-<script src="./chordino.js"></script>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chordino Extract</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 16px; font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+  p { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  progress { width: 240px; }
+  pre { font-size: 12px; }
+</style>
+</head>
+<body>
+  <p>
+    <input type="file" id="file" accept="audio/*,video/*">
+    or
+    <input type="text" id="url" placeholder="Enter MP3 URL" value="chords.mp3">
+    <button id="btn-start">Detect Chords</button>
+  </p>
+  <p>
+    <progress id="progress" max="1" value="0" hidden></progress>
+    <span id="status"></span>
+    <a id="download" hidden>Download JSON</a>
+  </p>
+  <pre id="output"></pre>
 <script>
-    document.getElementById('btn-start').addEventListener('click', async () => {
-        const url = document.getElementById('mp3-url').value;
-        if (!url) {
-            alert('Please enter an MP3 URL');
-            return;
-        }
-        const samplerate = 44000;
-        const bufferSize = 4096;
-        const pBuffer = Module._malloc(bufferSize * Float32Array.BYTES_PER_ELEMENT);
-        const instance = Module.initializePlugin(samplerate, bufferSize);
-        const audioContext = new AudioContext({ sampleRate: samplerate });
-        try {
-            const response = await fetch(url);
-            const arrayBuffer = await response.arrayBuffer();
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+  // Decoding needs an audio context, which workers lack, so it happens here;
+  // chordino-worker.js (see chord-worker.js) does the rest.
+  const SAMPLE_RATE = 44100;
 
-            const channelData = audioBuffer.getChannelData(0); // mono
-            const totalSamples = channelData.length;
+  const $ = (id) => document.getElementById(id);
+  const progress = $('progress');
+  const statusText = $('status');
+  const download = $('download');
+  const output = $('output');
+  let worker = null;
 
-            for (let offset = 0; offset < totalSamples; offset += bufferSize) {
-                const chunkSize = Math.min(bufferSize, totalSamples - offset);
-                const data = channelData.slice(offset, offset + chunkSize);
-                // Pad if necessary
-                const paddedData = new Float32Array(bufferSize);
-                paddedData.set(data);
+  $('file').addEventListener('change', (event) => {
+    const [file] = event.target.files;
+    if (file) {
+      detect(file.name, () => file.arrayBuffer());
+    }
+  });
 
-                const currentTimeMs = Math.trunc((offset / samplerate) * 1000);
-
-                HEAPF32.set(paddedData, pBuffer >> 2);
-            
-                // Process data
-                Module.processBuffer(instance, pBuffer, currentTimeMs);
-            }
-            // Read back the results
-            const result = Module.getResult(instance);
-            console.log('Processing complete', result);
-        } catch (err) {
-            console.error('Error processing MP3:', err);
-        } finally {
-            Module.releasePlugin(instance);
-            Module._free(pBuffer);
-            audioContext.close();
-        }
+  $('btn-start').addEventListener('click', () => {
+    const url = $('url').value;
+    if (!url) {
+      alert('Please enter an MP3 URL');
+      return;
+    }
+    detect(url.split('/').pop(), async () => {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.arrayBuffer();
     });
+  });
+
+  async function detect(name, read) {
+    worker?.terminate();
+    worker = null;
+    output.textContent = '';
+    download.hidden = true;
+    setStatus(`Decoding ${name}…`, null);
+    let samples;
+    try {
+      samples = await decode(await read());
+    } catch (err) {
+      setStatus(`Could not decode ${name}: ${err.message}`);
+      return;
+    }
+
+    const started = performance.now();
+    const current = worker = new Worker('./chordino-worker.js');
+    const finish = (text) => {
+      current.terminate();
+      worker = null;
+      setStatus(text);
+    };
+    current.onmessage = ({ data }) => {
+      if (data.type === 'progress') {
+        setStatus(`Detecting chords in ${name}… ${Math.round(data.value * 100)}%`, data.value);
+      } else if (data.type === 'done') {
+        const { timestamps } = data.result;
+        const seconds = ((performance.now() - started) / 1000).toFixed(1);
+        finish(`${name}: ${timestamps.length} marks, detected in ${seconds} s`);
+        // Laid out like test/fixtures/training.json, one mark per line
+        const text = `{"timestamps":[\n${timestamps.map((mark) => `  ${JSON.stringify(mark)}`).join(',\n')}\n]}\n`;
+        output.textContent = text;
+        URL.revokeObjectURL(download.href);
+        download.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+        download.download = `${name.replace(/\.[^.]+$/, '')}.json`;
+        download.hidden = false;
+      } else if (data.type === 'error') {
+        finish(`Detection failed: ${data.message}`);
+      }
+    };
+    current.onerror = (event) => {
+      event.preventDefault();
+      finish(`Detection failed: ${event.message || 'could not run chordino-worker.js'}`);
+    };
+    current.postMessage({ samples, sampleRate: SAMPLE_RATE }, [samples.buffer]);
+  }
+
+  /** Decodes at the rate the plugin is initialised with and mixes down to mono. */
+  async function decode(arrayBuffer) {
+    const context = new OfflineAudioContext(1, 1, SAMPLE_RATE);
+    const buffer = await context.decodeAudioData(arrayBuffer);
+    const mono = new Float32Array(buffer.length);
+    for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+      const data = buffer.getChannelData(channel);
+      for (let i = 0; i < mono.length; i++) {
+        mono[i] += data[i] / buffer.numberOfChannels;
+      }
+    }
+    return mono;
+  }
+
+  /** value: 0-1 shows the bar, null an indeterminate one, undefined hides it. */
+  function setStatus(text, value) {
+    statusText.textContent = text;
+    progress.hidden = value === undefined;
+    if (value === null) {
+      progress.removeAttribute('value');
+    } else if (value !== undefined) {
+      progress.value = value;
+    }
+  }
 </script>
+</body>
+</html>
