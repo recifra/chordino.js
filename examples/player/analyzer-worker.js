@@ -26,7 +26,7 @@ onmessage = ({ data: { samples, sampleRate } }) => {
     // Chordino does the NNLS, chord matching and Viterbi decoding all in here
     postMessage({ type: 'decoding' });
     const analysis = Module.getAnalysis(instance);
-    const transfer = [analysis.times.buffer, ...OUTPUTS.map((output) => analysis[output].values.buffer)];
+    const transfer = [analysis.times.buffer, analysis.gate.buffer, ...OUTPUTS.map((output) => analysis[output].values.buffer)];
     postMessage({ type: 'done', analysis }, transfer);
   } catch (err) {
     postMessage({ type: 'error', message: String(err) });

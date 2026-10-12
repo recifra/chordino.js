@@ -48,6 +48,9 @@ describe('inspect build', () => {
       assert.equal(bins.binNames.length, bins.binCount, output);
       assert.equal(bins.values.length, frames * bins.binCount, output);
     }
+    assert.ok(analysis.gate instanceof Uint8Array);
+    assert.equal(analysis.gate.length, frames);
+    assert.ok(analysis.gate.every((reason) => reason <= 2), 'gate reasons are 0, 1 or 2');
     assert.equal(analysis.chordsalience.binNames.at(-1), 'N');
     assert.equal(analysis.chroma.binNames[0], 'A (bass)');
     assert.equal(analysis.chroma.binNames[12], 'A');

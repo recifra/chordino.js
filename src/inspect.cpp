@@ -26,6 +26,7 @@ struct Collected {
     vector<float> smoothedChroma;
     vector<float> salience;
     vector<float> semitones;
+    vector<uint8_t> gate;
 };
 
 Collected collected;
@@ -50,6 +51,12 @@ vector<string> semitoneNames() {
 
 emscripten::val toFloat32Array(const vector<float> &values) {
     emscripten::val array = emscripten::val::global("Float32Array").new_(values.size());
+    array.call<void>("set", emscripten::val(emscripten::typed_memory_view(values.size(), values.data())));
+    return array;
+}
+
+emscripten::val toUint8Array(const vector<uint8_t> &values) {
+    emscripten::val array = emscripten::val::global("Uint8Array").new_(values.size());
     array.call<void>("set", emscripten::val(emscripten::typed_memory_view(values.size(), values.data())));
     return array;
 }
@@ -81,12 +88,14 @@ void chordinoInspectFrame(double time,
                           const vector<float> &chroma,
                           const vector<double> &smoothedChroma,
                           const vector<double> &salience,
-                          const float *semitones) {
+                          const float *semitones,
+                          int gate) {
     collected.times.push_back(time);
     collected.chroma.insert(collected.chroma.end(), chroma.begin(), chroma.end());
     collected.smoothedChroma.insert(collected.smoothedChroma.end(), smoothedChroma.begin(), smoothedChroma.end());
     collected.salience.insert(collected.salience.end(), salience.begin(), salience.end());
     collected.semitones.insert(collected.semitones.end(), semitones, semitones + 84);
+    collected.gate.push_back(gate);
 }
 
 emscripten::val getAnalysis(uintptr_t lpAdapter) {
@@ -126,6 +135,7 @@ emscripten::val getAnalysis(uintptr_t lpAdapter) {
     result.set("smoothedchroma", bins(chroma, collected.smoothedChroma));
     result.set("chordsalience", bins(collected.chordNames, collected.salience));
     result.set("semitonespectrum", bins(semitoneNames(), collected.semitones));
+    result.set("gate", toUint8Array(collected.gate));
     collected = Collected();
     return result;
 }

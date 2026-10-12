@@ -15,6 +15,7 @@ const GUTTER = 72;
 const TILE_FRAMES = 4096;
 const BAND = 24;
 const STRIP = 5;
+const GATE_HEIGHT = 4;
 const TICK_BAND = 14;
 // A chord the Viterbi path never takes still gets a salience row when it wins
 // at least this many frames on its own.
@@ -262,6 +263,7 @@ function buildView(analysis) {
     labelByKey,
     chroma: analysis.chroma,
     templateCount: analysis.chordsalience.binCount,
+    gate: analysis.gate,
     comparison: null,
   };
 }
@@ -415,6 +417,7 @@ function createLane() {
   const section = document.createElement('section');
   section.className = 'panel';
   section.innerHTML = '<h2>Chords <small>Viterbi path, and the expected chords when a JSON is loaded; ' +
+    'ticks on top: frames the confidence gate rejected (gray: chord too close to N, purple: another root too close); ' +
     'click any panel to seek</small></h2>';
   const canvas = document.createElement('canvas');
   section.append(canvas);
@@ -502,6 +505,8 @@ function readTheme() {
     exact: read('--ok'),
     root: read('--warn'),
     miss: read('--bad'),
+    gateN: read('--gate-n'),
+    gateRoot: read('--gate-root'),
     laneA: read('--lane-a'),
     laneB: read('--lane-b'),
     empty: read('--plot-empty'),
@@ -582,6 +587,7 @@ function drawLane(time) {
   context.rect(GUTTER, 0, area.plotWidth, height);
   context.clip();
   drawSegments(context, view.segments, 0, x, time, width);
+  drawGate(context, start, x);
   if (comparison) {
     for (const interval of comparison.intervals) {
       const x0 = x(interval.start);
@@ -615,6 +621,19 @@ function drawLane(time) {
   }
   context.textAlign = 'left';
   drawPlayhead(context, area);
+}
+
+/** Marks frames the confidence gate rejected along the top of the detected band. */
+function drawGate(context, start, x) {
+  const { gate, frameRate, frames } = view;
+  const first = Math.max(Math.floor(start * frameRate), 0);
+  const last = Math.min(Math.ceil((start + windowSec) * frameRate), frames);
+  for (let frame = first; frame < last; frame++) {
+    if (gate[frame]) {
+      context.fillStyle = gate[frame] === 1 ? theme.gateN : theme.gateRoot;
+      context.fillRect(x(frame / frameRate), 0, x((frame + 1) / frameRate) - x(frame / frameRate), GATE_HEIGHT);
+    }
+  }
 }
 
 function drawSegments(context, segments, top, x, time, width) {

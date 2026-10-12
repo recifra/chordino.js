@@ -27,11 +27,14 @@ void chordinoInspectBegin(const std::vector<std::string> &chordNames);
 //  salience:       one value per chord in chordNames, after the confidence gate
 //                  (what the Viterbi decoder receives)
 //  semitones:      84 semitone activations, A0 upwards
+//  gate:           confidence gate outcome: 0 passed, 1 the best chord did not
+//                  beat N by enough, 2 a chord on another root came too close
 void chordinoInspectFrame(double seconds,
                           const std::vector<float> &chroma,
                           const std::vector<double> &smoothedChroma,
                           const std::vector<double> &salience,
-                          const float *semitones);
+                          const float *semitones,
+                          int gate);
 
 #endif
 

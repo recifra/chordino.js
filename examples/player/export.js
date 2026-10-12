@@ -46,6 +46,7 @@ export function buildExport({ view, expected, audioName, step }) {
     const ranked = [...probabilities.keys()].sort((a, b) => probabilities[b] - probabilities[a]);
     const record = {
       level: round(level / (chromaMean.last - chromaMean.first) / typicalEnergy, 2),
+      ...gated(view.gate, chromaMean.first, chromaMean.last),
       bass: sparseChroma(chromaMean.values.subarray(0, 12), pitchNames),
       treble: sparseChroma(chromaMean.values.subarray(12, 24), pitchNames),
       top: ranked.slice(0, TOP_CHORDS).map((label) => [salience.binNames[label], round(probabilities[label], 4)]),
@@ -109,6 +110,19 @@ export function buildExport({ view, expected, audioName, step }) {
   return serialize(data);
 }
 
+/** Share of the frames the confidence gate rejected, by reason; nothing when none were. */
+function gated(gate, first, last) {
+  const counts = [0, 0, 0];
+  for (let frame = first; frame < last; frame++) {
+    counts[gate[frame]]++;
+  }
+  if (counts[1] + counts[2] === 0) {
+    return {};
+  }
+  const share = (count) => round(count / (last - first), 2);
+  return { gated: { ...(counts[1] ? { vsN: share(counts[1]) } : {}), ...(counts[2] ? { rootMargin: share(counts[2]) } : {}) } };
+}
+
 function readme({ audioName, expected, step, templates }) {
   return [
     `Chord analysis of ${audioName} by Chordino (NNLS chroma, chord template matching, HMM/Viterbi smoothing). Times are in seconds.`,
@@ -124,6 +138,7 @@ function readme({ audioName, expected, step, templates }) {
     `timeline: fixed windows of ${step} s starting at t; detected/expected are the chords sounding at the window midpoint.`,
     `bass / treble: mean NNLS chroma over the record, the two halves the chord templates are matched against, each scaled to its own strongest pitch class (1), weaker than ${CHROMA_FLOOR} left out, strongest first. {} = silence.`,
     'level: chroma energy relative to the median frame of the song; near 0 = silence or very quiet.',
+    'gated: share of frames the confidence gate rejected and pushed towards N, by reason: vsN = the best chord did not beat the no-chord template by the required margin, rootMargin = a chord on another root scored too close to it. Absent when no frame was rejected.',
     `top: the ${TOP_CHORDS} most probable chord labels with their mean probability over the record. This is the matcher's per-frame distribution over ${templates} templates (summed per label) after its confidence gate, i.e. what the Viterbi decoder receives. It is flat by design, so read the values relative to each other; a frame that fails the gate puts nearly all weight on N.`,
     ...(expected ? [
       'expectedRank / expectedP: rank (1 = most probable) and mean probability of the expected chord; null when the dictionary has no template for it.',

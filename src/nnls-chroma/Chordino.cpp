@@ -599,9 +599,12 @@ Chordino::getRemainingFeatures()
         }
         chordogram.push_back(currentChordSalience);
 #ifdef CHORDINO_INSPECT
+        int gate = 0;
+        if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
+        else if (!confident) gate = 2;
         chordinoInspectFrame(currentChromas.timestamp.sec + currentChromas.timestamp.nsec / 1e9,
                              currentChromas.values,
-                             smoothedChroma, currentChordSalience, semitones);
+                             smoothedChroma, currentChordSalience, semitones, gate);
 #endif
 	        
         count++;
