@@ -1,0 +1,11 @@
+{
+  "name": "chordino-wasm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "devDependencies": {
+    "mpg123-decoder": "^1.0.3"
+  }
+}

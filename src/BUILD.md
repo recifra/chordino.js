@@ -27,5 +27,15 @@ emcc --bind -O3 \
 ```
 
 ```sh
+cp chordino.js ../examples/extract/chordino.js
 cat chordino.js ../examples/realtime/chord-processor.js > ../examples/realtime/chordino-processor.js
+```
+
+## Tests
+Run from the repository root. They load the bundles in `examples/`, so copy the
+build there first (see above).
+
+```sh
+npm install
+npm test
 ```

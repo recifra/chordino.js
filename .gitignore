@@ -1,3 +1,4 @@
 .DS_Store
 src/chordino.js
 src/nnls-chroma/chordextract
+node_modules
