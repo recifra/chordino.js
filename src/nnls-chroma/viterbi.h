@@ -23,6 +23,6 @@
 #include <string>
 using namespace std;
 
-extern std::vector<int> ViterbiPath(std::vector<double> init, std::vector<vector<double> > trans, std::vector<vector<double> > obs, double *delta, vector<double> *scale);
+extern std::vector<int> ViterbiPath(const std::vector<double> &init, const std::vector<vector<double> > &trans, const std::vector<vector<double> > &obs, double *delta, vector<double> *scale);
 
 #endif
