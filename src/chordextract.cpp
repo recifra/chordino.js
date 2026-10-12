@@ -84,7 +84,9 @@ emscripten::val getResult(uintptr_t lpAdapter) {
         // Construct objects directly in JS
         emscripten::val item = emscripten::val::object();
         item.set("chord", chordFeatures[i].label);
-        item.set("time", chordFeatures[i].timestamp.msec() / 1000.f);
+        // RealTime::msec() is only the sub-second part, so build the time from sec too
+        const RealTime &timestamp = chordFeatures[i].timestamp;
+        item.set("time", timestamp.sec + timestamp.nsec / 1e9);
         result.call<void>("push", item);
     }
     return result;

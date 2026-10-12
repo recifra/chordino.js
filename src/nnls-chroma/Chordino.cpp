@@ -592,7 +592,6 @@ Chordino::getRemainingFeatures()
     vector<Feature> oldnotes;
 
     if (debug_on) cerr << "[Chordino Plugin] HMM Chord Estimation ... ";
-    int oldchord = nChord-1;
     double selftransprob = 0.99;
  
     // Uniform prior: forcing init[nChord-1]=1 (N) here makes every decode assume the
@@ -614,11 +613,27 @@ Chordino::getRemainingFeatures()
     vector<double> scale;
     vector<int> chordpath = ViterbiPath(init, trans, chordogram, delta, &scale);
     
+    auto prepareChordNotes = [&](int iFrame) {
+        for (int iNote = 0; iNote < (int)m_chordnotes[chordpath[iFrame]].size(); ++iNote) { // prepare notes of current chord
+            Feature chordnote_feature;
+            chordnote_feature.hasTimestamp = true;
+            chordnote_feature.timestamp = timestamps[iFrame];
+            chordnote_feature.values.push_back(m_chordnotes[chordpath[iFrame]][iNote]);
+            chordnote_feature.hasDuration = true;
+            chordnote_feature.duration = -timestamps[iFrame]; // this will be corrected at the next chord
+            oldnotes.push_back(chordnote_feature);
+        }
+    };
+
     Feature chord_feature; // chord estimate
     chord_feature.hasTimestamp = true;
     chord_feature.timestamp = timestamps[0];
     chord_feature.label = m_chordnames[chordpath[0]];
     fsOut[m_outputChords].push_back(chord_feature);
+    // With the uniform prior the path no longer always starts on N, so track the first
+    // chord as already emitted; otherwise it is reported again at the second frame.
+    int oldchord = chordpath[0];
+    prepareChordNotes(0);
     
     chordchange[0] = 0;
     for (int iFrame = 1; iFrame < (int)chordpath.size(); ++iFrame) {
@@ -636,15 +651,7 @@ Chordino::getRemainingFeatures()
                 fsOut[m_outputChordnotes].push_back(oldnotes[iNote]);
             }
             oldnotes.clear();
-            for (int iNote = 0; iNote < (int)m_chordnotes[chordpath[iFrame]].size(); ++iNote) { // prepare notes of current chord
-                Feature chordnote_feature;
-                chordnote_feature.hasTimestamp = true;
-                chordnote_feature.timestamp = timestamps[iFrame];
-                chordnote_feature.values.push_back(m_chordnotes[chordpath[iFrame]][iNote]);
-                chordnote_feature.hasDuration = true;
-                chordnote_feature.duration = -timestamps[iFrame]; // this will be corrected at the next chord
-                oldnotes.push_back(chordnote_feature);
-            }
+            prepareChordNotes(iFrame);
         }
         /* calculating simple chord change prob */            
         for (int iChord = 0; iChord < nChord; iChord++) {
