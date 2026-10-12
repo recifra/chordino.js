@@ -562,9 +562,21 @@ Chordino::getRemainingFeatures()
         for (int iChord = 1; iChord < nChord - 1; iChord++) {
             if (rawChordValue[iChord] > rawChordValue[bestChord]) bestChord = iChord;
         }
+        // Neighbouring chords on another root are not rivals either: G and Em, C and Am,
+        // F and Dm share two of their three notes, so a clean, sustained G scores within
+        // a few percent of Em by construction. Counting them failed the margin on whole
+        // stretches of plain diatonic music (about 15% of frames on a worship song),
+        // and since a rejected frame outweighs many accepted ones in the Viterbi
+        // decode, those stretches came out as N. Speech and singing still fail the
+        // margin, against chords sharing at most one note with the winner.
         double bestRivalRoot = 0;
         for (int iChord = 0; iChord < nChord - 1; iChord++) {
             if (iChord % 12 == bestChord % 12) continue;
+            int sharedNotes = 0;
+            for (int iBin = 12; iBin < 24; iBin++) {
+                if (m_chorddict[24 * iChord + iBin] > 0 && m_chorddict[24 * bestChord + iBin] > 0) sharedNotes++;
+            }
+            if (sharedNotes >= 2) continue;
             if (rawChordValue[iChord] > bestRivalRoot) bestRivalRoot = rawChordValue[iChord];
         }
         bool confident =
