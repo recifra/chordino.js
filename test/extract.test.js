@@ -33,10 +33,10 @@ describe('offline extraction', () => {
     assertWellFormed(result);
     assert.deepEqual(labels(result), ['G', 'C', 'F', 'N']);
     // Reference from upstream Chordino (src/nnls-chroma/chordextract): C at 1.49s,
-    // F at 2.83s. The chroma smoothing here lags it a little.
+    // F at 2.83s. The chroma smoothing runs both ways, so it must not lag them.
     const [, c, f, end] = result;
-    assert.ok(Math.abs(c.time - 1.49) < 0.3, `C at ${c.time}`);
-    assert.ok(Math.abs(f.time - 2.83) < 0.3, `F at ${f.time}`);
+    assert.ok(Math.abs(c.time - 1.49) < 0.1, `C at ${c.time}`);
+    assert.ok(Math.abs(f.time - 2.83) < 0.1, `F at ${f.time}`);
     assert.ok(end.time > 5 && end.time <= samples.length / sampleRate, `end at ${end.time}`);
   });
 
@@ -74,7 +74,7 @@ describe('offline extraction', () => {
     assertWellFormed(result);
     assert.deepEqual(labels(result), [...progression, 'N']);
     for (let i = 1; i < progression.length; i++) {
-      assert.ok(Math.abs(result[i].time - 2 * i) < 0.3, `${result[i].chord} at ${result[i].time}`);
+      assert.ok(Math.abs(result[i].time - 2 * i) < 0.1, `${result[i].chord} at ${result[i].time}`);
     }
   });
 

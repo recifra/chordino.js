@@ -34,7 +34,8 @@ const bool debug_on = false;
 // how much say the bass note has; it is a plain ratio between two comparable
 // quantities rather than a gain applied to one of them.
 const double bassWeight = 0.6;
-// Leaky integrator applied to chroma before chord matching, so a chord needs to be
+// Leaky integrator applied to chroma before chord matching (forwards and backwards,
+// see getRemainingFeatures), so a chord needs to be
 // sustained for roughly this long to dominate the signal used for scoring -- a
 // single noisy/transient frame can't flip the match. alpha tuned for an effective
 // window of ~300ms at the analysis frame rate (preferred step size 2048 samples,
@@ -378,14 +379,11 @@ Chordino::getRemainingFeatures()
 
     bool clipwarned = false;
 
-    // Smoothed copy of the chroma used only for chord matching (see chromaEmaAlpha
-    // above); the raw per-frame chroma is left untouched for the exported
-    // chromagram feature and for tuning/normalisation, which should reflect the
-    // actual instantaneous signal.
-    vector<double> smoothedChroma(24, 0.0);
-    bool smoothedChromaInit = false;
-
+    // Raw stacked chroma of every frame; chord matching runs on a smoothed copy
+    // computed once all of them are known (see below).
+    vector<vector<float> > rawChromas;
 #ifdef CHORDINO_INSPECT
+    vector<vector<float> > inspectSemitones;
     chordinoInspectBegin(m_chordnames);
 #endif
 
@@ -477,17 +475,7 @@ Chordino::getRemainingFeatures()
         vector<float> origchroma = chroma;
         chroma.insert(chroma.begin(), basschroma.begin(), basschroma.end()); // just stack the both chromas
         currentChromas.values = chroma;
-
-        if (!smoothedChromaInit) {
-            for (int i = 0; i < 24; i++) smoothedChroma[i] = chroma[i];
-            smoothedChromaInit = true;
-        } else {
-            // Bins 0-11 are the bass chroma, 12-23 the treble one (stacked above).
-            for (int i = 0; i < 24; i++) {
-                double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
-                smoothedChroma[i] = alpha * chroma[i] + (1 - alpha) * smoothedChroma[i];
-            }
-        }
+        rawChromas.push_back(chroma);
 
         if (m_doNormalizeChroma > 0) {
             vector<float> chromanorm = vector<float>(3,0);			
@@ -519,6 +507,45 @@ Chordino::getRemainingFeatures()
         }
 
         chromaList.push_back(currentChromas);
+#ifdef CHORDINO_INSPECT
+        inspectSemitones.push_back(vector<float>(semitones, semitones + 84));
+#endif
+        count++;
+    }
+
+    // Smoothed copy of the chroma used only for chord matching (see chromaEmaAlpha
+    // above); the raw per-frame chroma is left untouched for the exported
+    // chromagram feature and for tuning/normalisation, which should reflect the
+    // actual instantaneous signal.
+    //
+    // The integrator runs forwards and backwards and the two are averaged. A
+    // forward-only one lags by (1 - alpha) / alpha frames, about 0.26 s for the
+    // treble, which made every chord change come out that much late; the two
+    // directions lag by the same amount the opposite way, so their average is
+    // centred on the frame. Everything is buffered until here anyway, so the
+    // future frames are available.
+    vector<vector<double> > smoothedChromas(nFrame, vector<double>(24, 0.0));
+    vector<double> runningChroma(24, 0.0);
+    for (int iFrame = 0; iFrame < nFrame; iFrame++) {
+        // Bins 0-11 are the bass chroma, 12-23 the treble one (stacked above).
+        for (int i = 0; i < 24; i++) {
+            double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
+            runningChroma[i] = iFrame == 0 ? rawChromas[iFrame][i]
+                : alpha * rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
+            smoothedChromas[iFrame][i] = runningChroma[i] / 2;
+        }
+    }
+    for (int iFrame = nFrame - 1; iFrame >= 0; iFrame--) {
+        for (int i = 0; i < 24; i++) {
+            double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
+            runningChroma[i] = iFrame == nFrame - 1 ? rawChromas[iFrame][i]
+                : alpha * rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
+            smoothedChromas[iFrame][i] += runningChroma[i] / 2;
+        }
+    }
+
+    for (int iFrame = 0; iFrame < nFrame; iFrame++) {
+        const vector<double> &smoothedChroma = smoothedChromas[iFrame];
 
         // local chord estimation
         vector<double> currentChordSalience;
@@ -614,12 +641,11 @@ Chordino::getRemainingFeatures()
         int gate = 0;
         if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
         else if (!confident) gate = 2;
-        chordinoInspectFrame(currentChromas.timestamp.sec + currentChromas.timestamp.nsec / 1e9,
-                             currentChromas.values,
-                             smoothedChroma, currentChordSalience, semitones, gate);
+        const Feature &frameChromas = chromaList[iFrame];
+        chordinoInspectFrame(frameChromas.timestamp.sec + frameChromas.timestamp.nsec / 1e9,
+                             frameChromas.values,
+                             smoothedChroma, currentChordSalience, inspectSemitones[iFrame].data(), gate);
 #endif
-	        
-        count++;
     }
     if (debug_on) cerr << "done." << endl;
 		
