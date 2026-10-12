@@ -50,13 +50,16 @@
   }
   header, .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
   h1 { font-size: 18px; margin: 0; }
-  .file {
+  .file, #export {
     padding: 4px 12px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--surface);
+    color: inherit;
+    font: inherit;
     cursor: pointer;
   }
+  #export:disabled { opacity: 0.5; cursor: default; }
   .file input { display: none; }
   #status { color: var(--muted); }
   progress { width: 160px; }
@@ -117,6 +120,14 @@
     <label class="file">Choose audio / JSON… <input type="file" id="file" accept="audio/*,video/*,.json,application/json" multiple></label>
     <span id="status">Drop an audio file anywhere on the page, and optionally a chord JSON with the expected chords.</span>
     <progress id="progress" max="1" hidden></progress>
+    <span class="export">
+      <button id="export" disabled title="Detected and expected chords, chord probabilities and chroma, laid out for an AI to analyze">Export for AI</button>
+      <select id="export-step" title="Timeline window">
+        <option value="0.25">every 0.25 s</option>
+        <option value="0.5" selected>every 0.5 s</option>
+        <option value="1">every 1 s</option>
+      </select>
+    </span>
     <span id="expected-file" hidden><span id="expected-name"></span><button id="clear-expected" title="Remove expected chords">×</button></span>
   </header>
   <div class="controls">

@@ -4,6 +4,9 @@
 // test/fixtures/training.json) dropped with it, or later, is shown as the
 // expected chords and graded against the detected ones.
 
+import { chordKey, grade, segmentAt } from './chords.js';
+import { buildExport } from './export.js';
+
 const SAMPLE_RATE = 44100;
 // Left margin of every canvas, where bin labels go.
 const GUTTER = 72;
@@ -59,10 +62,13 @@ const expectedBox = $('expected');
 const expectedChord = $('expected-chord');
 const scoreText = $('score');
 const expectedFile = $('expected-file');
+const exportButton = $('export');
+const exportStep = $('export-step');
 
 const LUT = buildLut([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]);
 
 let view = null;
+let audioName = '';
 let expected = null;
 let worker = null;
 let audioUrl = null;
@@ -98,6 +104,15 @@ document.addEventListener('drop', (event) => {
   openFiles([...event.dataTransfer.files]);
 });
 
+exportButton.addEventListener('click', () => {
+  const text = buildExport({ view, expected, audioName, step: Number(exportStep.value) });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  link.download = `${audioName.replace(/\.[^.]+$/, '')}.chordino.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 0);
+});
+
 $('clear-expected').addEventListener('click', () => {
   expected = null;
   expectedFile.hidden = true;
@@ -121,6 +136,8 @@ async function load(file) {
   worker?.terminate();
   worker = null;
   view = null;
+  audioName = file.name;
+  exportButton.disabled = true;
   lastKey = '';
   if (audioUrl) {
     URL.revokeObjectURL(audioUrl);
@@ -160,6 +177,7 @@ async function load(file) {
       }
       view = buildView(data.analysis);
       refreshExpected();
+      exportButton.disabled = false;
       const seconds = ((performance.now() - started) / 1000).toFixed(1);
       setStatus(`${file.name} · ${formatTime(view.duration)} · ${view.frames} frames · ` +
         `${view.segments.length - 1} chords · analyzed in ${seconds} s`);
@@ -256,7 +274,18 @@ function buildView(analysis) {
   applyLayout(panelById('chroma'), chromaLayout(analysis.chroma));
   applyLayout(panelById('smoothedchroma'), chromaLayout(analysis.smoothedchroma));
   applyLayout(panelById('semitonespectrum'), semitoneLayout(analysis.semitonespectrum));
-  return { frames, frameRate, duration, chords, segments, salience, labelByKey, comparison: null };
+  return {
+    frames,
+    frameRate,
+    duration,
+    chords,
+    segments,
+    salience,
+    labelByKey,
+    chroma: analysis.chroma,
+    templateCount: analysis.chordsalience.binCount,
+    comparison: null,
+  };
 }
 
 /** Grades the detected chords against the expected ones and relays out the salience rows. */
@@ -284,37 +313,6 @@ function applyLayout(panel, layout) {
   panel.tiles = buildTiles(layout.bins, layout.rows, layout.groups, panel.gamma ?? 1);
 }
 
-const NATURALS = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-
-function pitchClass(name) {
-  let pitch = NATURALS[name[0]];
-  for (const accidental of name.slice(1)) {
-    pitch += accidental === '#' ? 1 : -1;
-  }
-  return (pitch + 12) % 12;
-}
-
-/** Spelling-independent identity of a label: G#º = Abº, C/C = C, "" = N. */
-function chordKey(label) {
-  const match = /^([A-G][#b]*)([^/]*)(?:\/([A-G][#b]*))?$/.exec(label);
-  if (!match) {
-    return { root: null, id: label || 'N' };
-  }
-  const root = pitchClass(match[1]);
-  const bass = match[3] ? pitchClass(match[3]) : root;
-  return { root, id: `${root}${match[2]}/${bass}` };
-}
-
-/** exact: same chord; root: same root, other quality or bass; miss: anything else. */
-function grade(detected, wanted) {
-  const got = chordKey(detected);
-  const want = chordKey(wanted);
-  if (got.id === want.id) {
-    return 'exact';
-  }
-  return got.root !== null && got.root === want.root ? 'root' : 'miss';
-}
-
 /** Overlaps of detected and expected segments, graded, plus time-weighted scores. */
 function compare(detected, wanted, duration) {
   const intervals = [];
@@ -325,7 +323,7 @@ function compare(detected, wanted, duration) {
       const end = Math.min(want.end, got.end, duration);
       if (start < end) {
         const result = grade(got.chord, want.chord);
-        intervals.push({ start, end, result });
+        intervals.push({ start, end, result, expected: want.chord, detected: got.chord });
         totals[result] += end - start;
       }
     }
@@ -745,7 +743,7 @@ function drawPlayhead(context, area) {
 // --- readout ---------------------------------------------------------------------
 
 function expectedAt(time) {
-  return expected?.segments.find((segment) => segment.start <= time && time < segment.end);
+  return expected && segmentAt(expected.segments, time);
 }
 
 /** Salience label of the expected chord at `time`, if the dictionary has it. */
