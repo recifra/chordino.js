@@ -2,3 +2,4 @@
 src/chordino.js
 src/nnls-chroma/chordextract
 node_modules
+src/chordino-inspect.js

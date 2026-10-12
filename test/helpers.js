@@ -12,6 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export const paths = {
   chordino: path.join(root, 'examples/extract/chordino.js'),
+  inspect: path.join(root, 'examples/player/chordino-inspect.js'),
   processor: path.join(root, 'examples/realtime/chordino-processor.js'),
   chordsMp3: path.join(root, 'test/fixtures/chords.mp3'),
 };
@@ -50,8 +51,8 @@ function mixDown(channels) {
   return mono;
 }
 
-/** Same feeding loop as examples/extract/index.html. */
-export function detectChords({ Module, heapF32 }, samples, sampleRate, { bufferSize = 4096, instance } = {}) {
+/** Same feeding loop as examples/extract/index.html; `read` gets the instance once everything is fed. */
+function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 4096, instance } = {}) {
   const pBuffer = Module._malloc(bufferSize * Float32Array.BYTES_PER_ELEMENT);
   const ownInstance = instance === undefined;
   if (ownInstance) {
@@ -65,13 +66,22 @@ export function detectChords({ Module, heapF32 }, samples, sampleRate, { bufferS
       heapF32().set(block, pBuffer >> 2);
       Module.processBuffer(instance, pBuffer, Math.trunc((offset / sampleRate) * 1000));
     }
-    return Module.getResult(instance);
+    return read(instance);
   } finally {
     if (ownInstance) {
       Module.releasePlugin(instance);
     }
     Module._free(pBuffer);
   }
+}
+
+export function detectChords(chordino, samples, sampleRate, options) {
+  return feed(chordino, samples, sampleRate, (instance) => chordino.Module.getResult(instance), options);
+}
+
+/** Like detectChords, but through getAnalysis of the inspect build (examples/player). */
+export function analyzeChords(inspect, samples, sampleRate, options) {
+  return feed(inspect, samples, sampleRate, (instance) => inspect.Module.getAnalysis(instance), options);
 }
 
 const NOTE_NAMES = { C: 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3, E: 4, F: 5, 'F#': 6, Gb: 6, G: 7, 'G#': 8, Ab: 8, A: 9, 'A#': 10, Bb: 10, B: 11 };

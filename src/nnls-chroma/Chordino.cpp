@@ -18,6 +18,7 @@
 
 #include "Chordino.h"
 
+#include "ChordinoInspect.h"
 #include "chromamethods.h"
 #include "viterbi.h"
 
@@ -384,6 +385,10 @@ Chordino::getRemainingFeatures()
     vector<double> smoothedChroma(24, 0.0);
     bool smoothedChromaInit = false;
 
+#ifdef CHORDINO_INSPECT
+    chordinoInspectBegin(m_chordnames);
+#endif
+
     for (FeatureList::iterator it = tunedSpec.begin(); it != tunedSpec.end(); ++it) {
         Feature currentTunedSpec = *it; // logfreq spectrum
         Feature currentChromas; // treble and bass chromagram
@@ -410,6 +415,9 @@ Chordino::getRemainingFeatures()
         vector<float> basschroma = vector<float>(12, 0);
         float currval;
         int iSemitone = 0;
+#ifdef CHORDINO_INSPECT
+        float semitones[84] = {0};
+#endif
 			
         if (some_b_greater_zero) {
             if (m_useNNLS == 0) {
@@ -420,6 +428,9 @@ Chordino::getRemainingFeatures()
                     }
                     chroma[iSemitone % 12] += currval * treblewindow[iSemitone];
                     basschroma[iSemitone % 12] += currval * basswindow[iSemitone];
+#ifdef CHORDINO_INSPECT
+                    semitones[iSemitone] = currval;
+#endif
                     iSemitone++;
                 }
 		        
@@ -456,6 +467,9 @@ Chordino::getRemainingFeatures()
                     // cerr << mode << endl;
                     chroma[signifIndex[iNote] % 12] += x[iNote] * treblewindow[signifIndex[iNote]];
                     basschroma[signifIndex[iNote] % 12] += x[iNote] * basswindow[signifIndex[iNote]];
+#ifdef CHORDINO_INSPECT
+                    semitones[signifIndex[iNote]] = x[iNote];
+#endif
                 }
             }	
         }
@@ -584,6 +598,11 @@ Chordino::getRemainingFeatures()
             }
         }
         chordogram.push_back(currentChordSalience);
+#ifdef CHORDINO_INSPECT
+        chordinoInspectFrame(currentChromas.timestamp.sec + currentChromas.timestamp.nsec / 1e9,
+                             currentChromas.values,
+                             smoothedChroma, currentChordSalience, semitones);
+#endif
 	        
         count++;
     }
