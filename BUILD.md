@@ -60,7 +60,7 @@ Everything lands in `build/`:
   below. Not for apps, and not in the package.
 
 An app ships the five files at the top of `build/` together, in one directory.
-The two workers share the one `.wasm` (15 KB + 127 KB; the old single-file
+The two workers share the one `.wasm` (7 KB + 122 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
 2 and 1 KB of their own.
 
@@ -70,8 +70,9 @@ The workers and the worklet run in different global scopes,
 clash. So `src/js/tsconfig.json` only references one project per scope:
 `tsconfig.worker.json` (lib `webworker`) and `tsconfig.worklet.json`
 (`@types/audioworklet`). The workers import `./chordino.mjs`, typed by
-`src/js/chordino.d.mts` after the bindings at the end of
-`src/chordextract.cpp`; keep the two in step. esbuild transpiles each file on
+`src/js/chordino.d.mts` after `src/chordextract.js`, the API it puts over the
+C functions `src/chordextract.cpp` exports; keep the three in step. esbuild
+transpiles each file on
 its own and leaves that import as it is, so `chordino.mjs` must sit next to
 them.
 

@@ -22,8 +22,8 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 127 KB (58 KB gzipped) | Chordino and the Vamp host SDK |
-| `chordino.mjs` | 15 KB | ES module that loads the wasm; default export `createChordino()` |
+| `chordino.wasm` | 122 KB (56 KB gzipped) | Chordino and the Vamp host SDK |
+| `chordino.mjs` | 7 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |
 | `chord-processor.mjs` | 1 KB | AudioWorklet processor that hands live input to it |
@@ -233,7 +233,8 @@ npm test
 | Path | What it holds |
 | --- | --- |
 | `src/nnls-chroma/` | The NNLS Chroma / Chordino plugin source, adapted for this build |
-| `src/chordextract.cpp`, `src/session.h` | The bindings `chordino.mjs` exposes |
+| `src/chordextract.cpp`, `src/session.h` | The C functions `chordino.mjs` calls |
+| `src/chordextract.js` | The API `chordino.mjs` exposes over them |
 | `src/inspect.cpp` | Extra bindings of the inspect build |
 | `src/js/` | The workers and the worklet, in TypeScript |
 | `src/build.sh` | The `emcc` commands |

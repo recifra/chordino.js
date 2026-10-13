@@ -16,11 +16,15 @@ mkdir -p "$OUT/inspect"
 
 # One ES module plus one .wasm, so an app shipping both the worker and the
 # worklet carries the wasm once. Closure, no filesystem and LTO only shrink the
-# glue (78 KB -> 15 KB); -Oz would save 48 KB of wasm but doubles decode time.
-# noiostream.h keeps libc++'s streams out of the wasm (273 KB -> 127 KB).
-emcc --bind -O3 --closure 1 -flto \
+# glue (78 KB -> 15 KB), and chordextract.js in place of embind takes it to
+# 7 KB; EXPORT_KEEPALIVE=0 leaves the C functions it wraps off Module.
+# noiostream.h keeps libc++'s streams out of the wasm (273 KB -> 127 KB);
+# -Oz would save 48 KB more but doubles decode time.
+emcc -O3 --closure 1 -flto \
     -include noiostream.h \
+    --post-js chordextract.js \
     -s FILESYSTEM=0 \
+    -s EXPORT_KEEPALIVE=0 \
     -s ALLOW_MEMORY_GROWTH \
     -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=createChordino \
     -s "EXPORTED_FUNCTIONS=['_malloc','_free']" \
@@ -30,9 +34,11 @@ emcc --bind -O3 --closure 1 -flto \
 chmod 644 "$OUT/chordino.wasm"
 
 # Separate single-file bundle with the CHORDINO_INSPECT hooks and getAnalysis,
-# so the production module keeps its size and API
+# so the production module keeps its size and API. inspect.cpp still binds
+# getAnalysis with embind.
 emcc --bind -O3 \
     -DCHORDINO_INSPECT \
+    --post-js chordextract.js \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH \
     -s WASM_ASYNC_COMPILATION=0 \

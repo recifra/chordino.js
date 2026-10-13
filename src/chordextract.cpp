@@ -1,30 +1,34 @@
-#include <string>
-
 #include "vamp-hostsdk/PluginInputDomainAdapter.h"
 #include "vamp-hostsdk/PluginBufferingAdapter.h"
 
 #include "nnls-chroma/Chordino.h"
 #include "session.h"
 
-#include <iostream>
-#include <string>
 #include <emscripten/emscripten.h>
-#include <emscripten/bind.h>
-#include <stdlib.h>
 #include <cmath>
 
 using namespace std;
 using namespace Vamp;
 using namespace Vamp::HostExt;
 
-int main() {
-    return 0;
-}
+// The functions exported here are plain C ones; src/chordextract.js wraps them
+// in the API src/js/chordino.d.mts describes, without embind and its runtime.
+
+EM_JS_DEPS(chordextract, "$UTF8ToString");
+
+// Adds a chord to the list chordextract.js hands back from getResult and
+// getPartialResult
+EM_JS(void, pushChord, (const char *label, double time), {
+    chordList.push({ 'chord': UTF8ToString(label), 'time': time });
+});
+
+// Calls the function setProgressCallback was given
+EM_JS(void, reportProgress, (double done), {
+    progressCallback(done);
+});
 
 namespace {
 
-// See setProgressCallback
-emscripten::val progressCallback = emscripten::val::null();
 int reportedPercent = -1;
 
 void forwardProgress(double done) {
@@ -32,17 +36,16 @@ void forwardProgress(double done) {
     int percent = (int) floor(done * 100);
     if (percent == reportedPercent) return;
     reportedPercent = percent;
-    progressCallback(done);
+    reportProgress(done);
 }
 
 }
 
-// Sets the function getResult() calls with its progress, from 0 to 1, while it
-// works through the buffered audio; null or undefined stops the reports. Feeding
-// the audio is quick in comparison, the caller can report that part itself.
-void setProgressCallback(emscripten::val callback) {
-    bool enabled = !callback.isNull() && !callback.isUndefined();
-    progressCallback = enabled ? callback : emscripten::val::null();
+// Has getResult() report its progress, from 0 to 1, while it works through the
+// buffered audio. Feeding the audio is quick in comparison, the caller can
+// report that part itself.
+extern "C" EMSCRIPTEN_KEEPALIVE
+void setProgressReports(bool enabled) {
     reportedPercent = -1;
     chordinoProgress = enabled ? &forwardProgress : nullptr;
 }
@@ -54,7 +57,8 @@ void setProgressCallback(emscripten::val callback) {
 // With realtime set, ShiftTimestamp analyses each block as it comes and moves its
 // timestamp to its centre instead: the same frames minus the first few, each out
 // half a block sooner, which is what the realtime worklet wants.
-uintptr_t initializeSession(
+extern "C" EMSCRIPTEN_KEEPALIVE
+Session *initializePlugin(
     float samplerate,
     size_t blocksize,
     bool realtime
@@ -69,41 +73,33 @@ uintptr_t initializeSession(
     // Plugin requires 1 channel (we will mix after)
     if (!adapter->initialise(1, blocksize, blocksize)) {
         delete adapter;
-        return 0;
+        return nullptr;
     }
-    return (uintptr_t) new Session{chordino, adapter};
+    return new Session{chordino, adapter};
 }
 
-uintptr_t initializePlugin(
-    float samplerate,
-    size_t blocksize
-) {
-    return initializeSession(samplerate, blocksize, false);
-}
-
-void releasePlugin(uintptr_t lpSession) {
-    auto *session = reinterpret_cast<Session*>(lpSession);
+extern "C" EMSCRIPTEN_KEEPALIVE
+void releasePlugin(Session *session) {
     // The adapters own the plugin they wrap
     delete session->adapter;
     delete session;
 }
 
-void resetProcess(uintptr_t lpSession) {
-    reinterpret_cast<Session*>(lpSession)->adapter->reset();
+extern "C" EMSCRIPTEN_KEEPALIVE
+void resetProcess(Session *session) {
+    session->adapter->reset();
 }
 
+extern "C" EMSCRIPTEN_KEEPALIVE
 void processBuffer(
-    uintptr_t lpSession,
-    uintptr_t buffer,
+    Session *session,
+    float *buffer,
     long milliseconds
 ) {
-    auto *adapter = reinterpret_cast<Session*>(lpSession)->adapter;
-    float* mixbuf = reinterpret_cast<float*>(buffer);
-
     RealTime timestamp = RealTime::fromMilliseconds((int) milliseconds);
 
     // feed to plugin: can just take address of buffer, as only one channel
-    adapter->process(&mixbuf, timestamp);
+    session->adapter->process(&buffer, timestamp);
 }
 
 namespace {
@@ -120,40 +116,35 @@ int chordOutput(Plugin *plugin) {
     return -1;
 }
 
-emscripten::val toChordList(Plugin::FeatureSet &fs, int chordFeatureNo) {
-    emscripten::val result = emscripten::val::array();
+void pushChords(Plugin::FeatureSet &fs, int chordFeatureNo) {
     if (chordFeatureNo < 0)
     {
-        return result;
+        return;
     }
     Plugin::FeatureList& chordFeatures = fs[chordFeatureNo];
     for (int i = 0; i < (int)chordFeatures.size(); ++i)
     {
-        // Construct objects directly in JS
-        emscripten::val item = emscripten::val::object();
-        item.set("chord", chordFeatures[i].label);
         // RealTime::msec() is only the sub-second part, so build the time from sec too
         const RealTime &timestamp = chordFeatures[i].timestamp;
-        item.set("time", timestamp.sec + timestamp.nsec / 1e9);
-        result.call<void>("push", item);
+        pushChord(chordFeatures[i].label.c_str(), timestamp.sec + timestamp.nsec / 1e9);
     }
-    return result;
 }
 
 }
 
 // Chords of everything fed, once all of it has been: the last few samples the
 // adapter is still holding are padded with zeros to make up a whole frame.
-emscripten::val getResult(uintptr_t lpSession) {
-    auto *adapter = reinterpret_cast<Session*>(lpSession)->adapter;
+extern "C" EMSCRIPTEN_KEEPALIVE
+void getResult(Session *session) {
+    auto *adapter = session->adapter;
     int chordFeatureNo = chordOutput(adapter);
     if (chordFeatureNo < 0)
     {
-        return emscripten::val::array();
+        return;
     }
     // features at end of processing (actually Chordino does all its work here)
     Plugin::FeatureSet fs = adapter->getRemainingFeatures();
-    return toChordList(fs, chordFeatureNo);
+    pushChords(fs, chordFeatureNo);
 }
 
 // Chords of the frames analysed so far, for a caller that goes on feeding audio
@@ -161,28 +152,17 @@ emscripten::val getResult(uintptr_t lpSession) {
 // its frames any number of times. Going through the adapter like getResult does
 // would pad its buffered samples with zeros, and the audio fed next would then
 // follow those zeros: a gap in the signal on every read.
-emscripten::val getPartialResult(uintptr_t lpSession) {
-    auto *chordino = reinterpret_cast<Session*>(lpSession)->chordino;
+extern "C" EMSCRIPTEN_KEEPALIVE
+void getPartialResult(Session *session) {
+    auto *chordino = session->chordino;
     Plugin::FeatureSet fs = chordino->getRemainingFeatures();
-    return toChordList(fs, chordOutput(chordino));
+    pushChords(fs, chordOutput(chordino));
 }
 
 // Forgets the frames from before the given time (in the clock processBuffer was
 // given), so getPartialResult decodes a bounded window however long the audio
 // goes on. The tuning estimate still counts them.
-void forgetBefore(uintptr_t lpSession, long milliseconds) {
-    reinterpret_cast<Session*>(lpSession)->chordino->forgetFramesBefore(milliseconds / 1000.0);
-}
-
-EMSCRIPTEN_BINDINGS(chordextract) {
-    emscripten::function("initializePlugin", &initializePlugin);
-    // initializePlugin(samplerate, blocksize, realtime), see initializeSession
-    emscripten::function("initializePlugin", &initializeSession);
-    emscripten::function("releasePlugin", &releasePlugin);
-    emscripten::function("resetProcess", &resetProcess);
-    emscripten::function("processBuffer", &processBuffer);
-    emscripten::function("getResult", &getResult);
-    emscripten::function("getPartialResult", &getPartialResult);
-    emscripten::function("forgetBefore", &forgetBefore);
-    emscripten::function("setProgressCallback", &setProgressCallback);
+extern "C" EMSCRIPTEN_KEEPALIVE
+void forgetBefore(Session *session, long milliseconds) {
+    session->chordino->forgetFramesBefore(milliseconds / 1000.0);
 }
