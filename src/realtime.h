@@ -21,6 +21,8 @@ realtime_t realtime_from_milliseconds(int milliseconds);
 double realtime_to_seconds(realtime_t time);
 realtime_t realtime_add(realtime_t a, realtime_t b);
 realtime_t realtime_negate(realtime_t time);
+// Negative, zero or positive as a is before, at or after b
+int realtime_compare(realtime_t a, realtime_t b);
 // The frame at time, rounded to the nearest one
 long realtime_to_frame(realtime_t time, unsigned int sampleRate);
 realtime_t realtime_from_frame(long frame, unsigned int sampleRate);

@@ -1,7 +1,7 @@
 #ifndef CHORDINO_SESSION_H
 #define CHORDINO_SESSION_H
 
-#include "nnls-chroma/Chordino.h"
+#include "chordino.h"
 #include "realtime.h"
 #include "spectrum.h"
 
@@ -11,11 +11,11 @@
 // the same results: audio comes in blocks of any size, Chordino gets the
 // spectrum (spectrum.c) of blockSize samples every stepSize samples.
 struct Session {
-    Chordino *chordino;
+    chordino_t *chordino;
     float sampleRate;
     bool realtime;          // see initializePlugin in chordextract.cpp
     int inputBlockSize;     // samples per sessionProcess
-    int stepSize;           // Chordino's preferred ones
+    int stepSize;           // CHORDINO_STEP_SIZE and CHORDINO_BLOCK_SIZE
     int blockSize;
     float *pending;         // audio fed and not yet stepped past
     int pendingCount;
@@ -26,15 +26,19 @@ struct Session {
     spectrum_t *spectrum;
 };
 
-// Null when Chordino does not initialise
 Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime);
 void sessionRelease(Session *session);
 // Forgets the audio fed so far
 void sessionReset(Session *session);
 // Feeds inputBlockSize samples, the first of them at timestamp
 void sessionProcess(Session *session, const float *samples, realtime_t timestamp);
-// Pads what is still pending with zeros, analyses it, and returns Chordino's
-// features: for the end of the audio
-Vamp::Plugin::FeatureSet sessionFinish(Session *session);
+// Pads what is still pending with zeros, analyses it, and decodes every frame:
+// for the end of the audio
+const chordino_result_t *sessionFinish(Session *session);
+// Decodes the frames so far and leaves what is pending as it is: for a caller
+// that goes on feeding audio
+const chordino_result_t *sessionDecode(Session *session);
+// Has every decode report its progress, from 0 to 1, to progress; null stops it
+void sessionSetProgress(void (*progress)(double done));
 
 #endif

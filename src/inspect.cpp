@@ -13,11 +13,10 @@
 #include <emscripten/bind.h>
 
 using namespace std;
-using namespace Vamp;
 
 namespace {
 
-// Filled by the hooks during a single getRemainingFeatures() call; matrices are
+// Filled by the hooks during a single chordino_decode() call; matrices are
 // row-major, one row per frame.
 struct Collected {
     vector<string> chordNames;
@@ -34,7 +33,7 @@ struct Collected {
 Collected collected;
 
 // Chordino hands over a frame's chroma and semitones only the first time it
-// decodes it (see Chordino::m_rawChromas), so while getPartialAnalysis is in use
+// decodes it (see rawChromas in Chordino.cpp), so while getPartialAnalysis is in use
 // they are kept here, by frame time, for the calls after that.
 struct Remembered {
     vector<float> chroma;
@@ -90,10 +89,6 @@ emscripten::val bins(const vector<string> &names, const vector<float> &values) {
     return out;
 }
 
-double seconds(const RealTime &timestamp) {
-    return realtime_to_seconds({timestamp.sec, timestamp.nsec});
-}
-
 }
 
 void chordinoInspectBegin(const vector<string> &chordNames) {
@@ -135,31 +130,16 @@ void chordinoInspectFrame(double time,
 
 namespace {
 
-int chordOutput(Plugin *plugin) {
-    Plugin::OutputList outputs = plugin->getOutputDescriptors();
-    for (int i = 0; i < int(outputs.size()); ++i)
-    {
-        if (outputs[i].identifier == "simplechord")
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-
-// The chords in fs plus the bins the hooks collected, which it then clears.
-emscripten::val analysisResult(Plugin::FeatureSet &fs, int chordFeatureNo) {
+// The chords of the decode plus the bins the hooks collected, which it then
+// clears.
+emscripten::val analysisResult(const chordino_result_t *decoded) {
     emscripten::val chords = emscripten::val::array();
-    if (chordFeatureNo >= 0)
+    for (int i = 0; i < decoded->chordCount; ++i)
     {
-        Plugin::FeatureList& chordFeatures = fs[chordFeatureNo];
-        for (int i = 0; i < (int)chordFeatures.size(); ++i)
-        {
-            emscripten::val item = emscripten::val::object();
-            item.set("chord", chordFeatures[i].label);
-            item.set("time", seconds(chordFeatures[i].timestamp));
-            chords.call<void>("push", item);
-        }
+        emscripten::val item = emscripten::val::object();
+        item.set("chord", string(decoded->chords[i].label));
+        item.set("time", realtime_to_seconds(decoded->chords[i].time));
+        chords.call<void>("push", item);
     }
 
     vector<string> chroma(chromaNames, chromaNames + 24);
@@ -179,30 +159,27 @@ emscripten::val analysisResult(Plugin::FeatureSet &fs, int chordFeatureNo) {
 
 emscripten::val getAnalysis(uintptr_t lpSession) {
     auto *session = reinterpret_cast<Session*>(lpSession);
-    int chordFeatureNo = chordOutput(session->chordino);
     collected = Collected();
     // Chordino does all its work here, calling the hooks once per frame
-    Plugin::FeatureSet fs = sessionFinish(session);
-    return analysisResult(fs, chordFeatureNo);
+    return analysisResult(sessionFinish(session));
 }
 
 // Like getAnalysis, for a caller still feeding audio (examples/realtime): it
-// decodes through Chordino directly, as getPartialResult does, and returns the
+// decodes without finishing the session, as getPartialResult does, and returns the
 // chords of every frame left (see forgetBefore) but the bins of the frames after
 // afterSeconds only, with the values they have now.
 emscripten::val getPartialAnalysis(uintptr_t lpSession, double afterSeconds) {
-    auto *chordino = reinterpret_cast<Session*>(lpSession)->chordino;
-    int chordFeatureNo = chordOutput(chordino);
+    auto *session = reinterpret_cast<Session*>(lpSession);
     collected = Collected();
     partial = true;
     collectAfter = afterSeconds;
-    Plugin::FeatureSet fs = chordino->getRemainingFeatures();
+    const chordino_result_t *decoded = sessionDecode(session);
     partial = false;
     // Frames before the first one decoded have been forgotten for good
     if (collected.anyFrame) {
         remembered.erase(remembered.begin(), remembered.lower_bound(collected.firstFrame));
     }
-    return analysisResult(fs, chordFeatureNo);
+    return analysisResult(decoded);
 }
 
 EMSCRIPTEN_BINDINGS(inspect) {

@@ -8,7 +8,7 @@
 
   Centre for Digital Music, Queen Mary University of London.
   This file copyright 2008-2010 Matthias Mauch and QMUL.
-    
+
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
   published by the Free Software Foundation; either version 2 of the
@@ -16,21 +16,37 @@
   COPYING included with this distribution for more information.
 */
 
-#include "Chordino.h"
+// The Chordino Vamp plugin, with what was its base class NNLSBase, behind the
+// functions of src/chordino.h. A host could set the plugin's parameters; here
+// they are the constants below, and the branches only other values reached are
+// gone: no local tuning, no spectral roll-on, NNLS always, no chroma
+// normalisation.
+
+#include "../chordino.h"
 
 #include "ChordinoInspect.h"
 #include "chromamethods.h"
 #include "viterbi.h"
 
 #include <cstdlib>
-#include <fstream>
 #include <cmath>
+#include <iostream>
+#include <string>
+#include <vector>
 
 #include <algorithm>
 
-const bool debug_on = false;
-// Where each stage of getRemainingFeatures ends on the 0-1 scale chordinoProgress
-// reports, in proportion to the time it takes (measured on a 5 minute song) so the
+using namespace std;
+
+// Spectral whitening, the spread of the note templates' harmonics, the weight
+// of the no-chord template and chord names in Harte syntax (0: no), as the
+// plugin's parameters defaulted
+const float whitening = 1.0;
+const float sParam = 0.7;
+const float boostN = 0.1;
+const float harteSyntax = 0;
+// Where each stage of chordino_decode ends on the 0-1 scale progress reports,
+// in proportion to the time it takes (measured on a 5 minute song) so the
 // progress moves at a steady pace: tuning, NNLS chroma (nearly all of it), chord
 // salience, then the Viterbi decode and the output features.
 const double progressTuning = 0.02;
@@ -42,10 +58,10 @@ const double progressSalience = 0.98;
 // quantities rather than a gain applied to one of them.
 const double bassWeight = 0.6;
 // Leaky integrator applied to chroma before chord matching (forwards and backwards,
-// see getRemainingFeatures), so a chord needs to be
+// see chordino_decode), so a chord needs to be
 // sustained for roughly this long to dominate the signal used for scoring -- a
 // single noisy/transient frame can't flip the match. alpha tuned for an effective
-// window of ~300ms at the analysis frame rate (preferred step size 2048 samples,
+// window of ~300ms at the analysis frame rate (step size 2048 samples,
 // ~46ms/frame at 44.1kHz): alpha = 1 - exp(-frameMs/windowMs).
 const double chromaEmaAlpha = 0.15;
 // The bass bins get a much faster integrator. Which bass note is sounding is the
@@ -76,182 +92,188 @@ const double noConfidenceDamping = 0.01;
 // gain levels off there, sharper only splits chords into more segments.
 const double salienceBase = 2.8561;
 
-void (*chordinoProgress)(double done) = nullptr;
+namespace {
 
-Chordino::Chordino(float inputSampleRate) :
-    NNLSBase(inputSampleRate),
-    m_chorddict(0),
-    m_chordnotes(0),
-    m_chordnames(0)    
-{
-    if (debug_on) cerr << "--> Chordino" << endl;
+// A frame's log-frequency spectrum: nNote bins, a third of a semitone apart
+struct LogSpectrum {
+    realtime_t time;
+    vector<float> values;
+};
+
 }
 
-Chordino::~Chordino()
-{
-    if (debug_on) cerr << "--> ~Chordino" << endl;
-}
+struct chordino {
+    float inputSampleRate;
+    size_t blockSize;
+    int frameCount;
+    vector<LogSpectrum> logSpectrum;
+    vector<float> meanTunings;
+    vector<float> kernelValue;
+    vector<int> kernelFftIndex;
+    vector<int> kernelNoteIndex;
+    float *dict;
+    vector<float> hw;
+    vector<float> sinvalues;
+    vector<float> cosvalues;
+    vector<float> chorddict;
+    vector<vector<int> > chordnotes;
+    vector<string> chordnames;
+    // Raw stacked (bass, treble) chroma of the first frames of logSpectrum,
+    // kept between chordino_decode calls so a caller decoding again and again
+    // pays the NNLS of each frame once; those frames keep the tuning estimated
+    // when they were first decoded. Chord matching runs on a smoothed copy.
+    vector<vector<float> > rawChromas;
+    // What the last chordino_decode returned
+    vector<chordino_chord_t> chords;
+    vector<chordino_note_t> notes;
+    vector<realtime_t> times;
+    vector<float> harmonicChange;
+    vector<float> logLikelihood;
+    chordino_result_t result;
+};
 
-string
-Chordino::getIdentifier() const
-{
-    if (debug_on) cerr << "--> getIdentifier" << endl;
-    return "chordino";
-}
+chordino_t *chordino_create(float sampleRate) {
+    chordino_t *c = new chordino();
+    c->inputSampleRate = sampleRate;
+    // make the *note* dictionary matrix
+    c->dict = new float[nNote * 84];
+    for (int i = 0; i < nNote * 84; ++i) c->dict[i] = 0.0;
 
-string
-Chordino::getName() const
-{
-    if (debug_on) cerr << "--> getName" << endl;
-    return "Chordino";
-}
+	dictionaryMatrix(c->dict, sParam);
 
-string
-Chordino::getDescription() const
-{
-    if (debug_on) cerr << "--> getDescription" << endl;
-    return "Chordino provides a simple chord transcription based on NNLS Chroma (as in the NNLS Chroma plugin). A built-in set of chord profiles is used to calculate frame-wise chord similarities. A simple (non-state-of-the-art!) algorithm smoothes these to provide a chord transcription using a standard HMM/Viterbi approach.";
-}
-
-// Parameters used to be exposed through Vamp's named-parameter machinery so a host
-// like Sonic Visualiser could tune them at runtime. This build embeds its own host
-// and never sets them, so the defaults in NNLSBase's constructor are the only values
-// that ever apply; the descriptor list is gone and PluginBase's empty default is
-// inherited instead.
-
-Chordino::OutputList
-Chordino::getOutputDescriptors() const
-{
-    if (debug_on) cerr << "--> getOutputDescriptors" << endl;
-    OutputList list;
-    
-    int index = 0;
-
-    float featureRate =
-        (m_stepSize == 0) ? m_inputSampleRate/2048 : m_inputSampleRate/m_stepSize;
-    
-    OutputDescriptor d7;
-    d7.identifier = "simplechord";
-    d7.name = "Chord Estimate";
-    d7.description = "Estimated chord times and labels.";
-    d7.unit = "";
-    d7.hasFixedBinCount = true;
-    d7.binCount = 0;
-    d7.hasKnownExtents = false;
-    d7.isQuantized = false;
-    d7.sampleType = OutputDescriptor::VariableSampleRate;
-    d7.hasDuration = false;
-    d7.sampleRate = featureRate;
-    list.push_back(d7);
-    m_outputChords = index++;
-    
-    OutputDescriptor chordnotes;
-    chordnotes.identifier = "chordnotes";
-    chordnotes.name = "Note Representation of Chord Estimate";
-    chordnotes.description = "A simple representation of the estimated chord with bass note (if applicable) and chord notes.";
-    chordnotes.unit = "MIDI units";
-    chordnotes.hasFixedBinCount = true;
-    chordnotes.binCount = 1;
-    chordnotes.hasKnownExtents = true;
-    chordnotes.minValue = 0;
-    chordnotes.maxValue = 127;
-    chordnotes.isQuantized = true;
-    chordnotes.quantizeStep = 1;
-    chordnotes.sampleType = OutputDescriptor::VariableSampleRate;
-    chordnotes.hasDuration = true;
-    chordnotes.sampleRate = featureRate;
-    list.push_back(chordnotes);
-    m_outputChordnotes = index++;
-    
-    OutputDescriptor d8;
-    d8.identifier = "harmonicchange";
-    d8.name = "Harmonic Change Value";
-    d8.description = "An indication of the likelihood of harmonic change. Depends on the chord dictionary. Calculation is different depending on whether the Viterbi algorithm is used for chord estimation, or the simple chord estimate.";
-    d8.unit = "";
-    d8.hasFixedBinCount = true;
-    d8.binCount = 1;
-    d8.hasKnownExtents = false;
-    d8.isQuantized = false;
-    d8.sampleType = OutputDescriptor::FixedSampleRate;
-    d8.sampleRate = featureRate;
-    d8.hasDuration = false;
-    list.push_back(d8);
-    m_outputHarmonicChange = index++;
-  
-    OutputDescriptor loglikelihood;
-    loglikelihood.identifier = "loglikelihood";
-    loglikelihood.name = "Log-Likelihood of Chord Estimate";
-    loglikelihood.description = "Logarithm of the likelihood value of the simple chord estimate.";
-    loglikelihood.unit = "";
-    loglikelihood.hasFixedBinCount = true;
-    loglikelihood.binCount = 1;
-    loglikelihood.hasKnownExtents = false;
-    loglikelihood.isQuantized = false;
-    loglikelihood.sampleType = OutputDescriptor::FixedSampleRate;
-    loglikelihood.sampleRate = featureRate;
-    loglikelihood.hasDuration = false;
-    list.push_back(loglikelihood);
-    m_outputLoglikelihood = index++;
-  
-    return list;
-}
-
-bool
-Chordino::initialise(size_t channels, size_t stepSize, size_t blockSize)
-{	
-    if (debug_on) {
-        cerr << "--> initialise";
+	// make things for tuning estimation
+	for (int iBPS = 0; iBPS < nBPS; ++iBPS) {
+        c->sinvalues.push_back(sin(2*M_PI*(iBPS*1.0/nBPS)));
+        c->cosvalues.push_back(cos(2*M_PI*(iBPS*1.0/nBPS)));
     }
-    
-    if (!NNLSBase::initialise(channels, stepSize, blockSize)) {
-        return false;
+
+
+	// make hamming window of length 1/2 octave
+	int hamwinlength = nBPS * 6 + 1;
+    float hamwinsum = 0;
+    for (int i = 0; i < hamwinlength; ++i) {
+        c->hw.push_back(0.54 - 0.46 * cos((2*M_PI*i)/(hamwinlength-1)));
+        hamwinsum += 0.54 - 0.46 * cos((2*M_PI*i)/(hamwinlength-1));
     }
-    m_chordnames = chordDictionary(&m_chorddict, &m_chordnotes, m_boostN, m_harte_syntax);
-    return true;
+    for (int i = 0; i < hamwinlength; ++i) c->hw[i] = c->hw[i] / hamwinsum;
+
+
+    // initialise the tuning
+    for (int iBPS = 0; iBPS < nBPS; ++iBPS) {
+        c->meanTunings.push_back(0);
+    }
+
+    size_t blockSize = CHORDINO_BLOCK_SIZE;
+    c->blockSize = blockSize;
+    c->frameCount = 0;
+    int tempn = nNote * c->blockSize/2;
+    float *tempkernel;
+
+    tempkernel = new float[tempn];
+
+    logFreqMatrix(c->inputSampleRate, c->blockSize, tempkernel);
+    for (int iNote = 0; iNote < nNote; ++iNote) { // I don't know if this is wise: manually making a sparse matrix
+        for (int iFFT = 0; iFFT < static_cast<int>(blockSize/2); ++iFFT) {
+            if (tempkernel[iFFT + blockSize/2 * iNote] > 0) {
+                c->kernelValue.push_back(tempkernel[iFFT + blockSize/2 * iNote]);
+                c->kernelFftIndex.push_back(iFFT);
+                c->kernelNoteIndex.push_back(iNote);
+            }
+        }
+    }
+    delete [] tempkernel;
+
+    c->chordnames = chordDictionary(&c->chorddict, &c->chordnotes, boostN, harteSyntax);
+    return c;
 }
 
-void
-Chordino::reset()
-{
-    if (debug_on) cerr << "--> reset";
-    NNLSBase::reset();
-    m_rawChromas.clear();
+void chordino_destroy(chordino_t *c) {
+    delete [] c->dict;
+    delete c;
 }
 
-void
-Chordino::forgetFramesBefore(double seconds)
-{
-    Vamp::RealTime start = Vamp::RealTime::fromSeconds(seconds);
+void chordino_reset(chordino_t *c) {
+    // Clear buffers, reset stored values, etc
+    c->frameCount = 0;
+    c->logSpectrum.clear();
+    for (int iBPS = 0; iBPS < nBPS; ++iBPS) {
+        c->meanTunings[iBPS] = 0;
+    }
+    c->rawChromas.clear();
+}
+
+void chordino_forget_before(chordino_t *c, realtime_t start) {
     size_t drop = 0;
-    while (drop < m_logSpectrum.size() && m_logSpectrum[drop].timestamp < start) drop++;
+    while (drop < c->logSpectrum.size() && realtime_compare(c->logSpectrum[drop].time, start) < 0) drop++;
     if (drop == 0) return;
-    m_logSpectrum.erase(m_logSpectrum.begin(), m_logSpectrum.begin() + drop);
-    m_localTuning.erase(m_localTuning.begin(), m_localTuning.begin() + drop);
-    m_rawChromas.erase(m_rawChromas.begin(), m_rawChromas.begin() + min(drop, m_rawChromas.size()));
+    c->logSpectrum.erase(c->logSpectrum.begin(), c->logSpectrum.begin() + drop);
+    c->rawChromas.erase(c->rawChromas.begin(), c->rawChromas.begin() + min(drop, c->rawChromas.size()));
 }
 
-Chordino::FeatureSet
-Chordino::process(const float *const *inputBuffers, Vamp::RealTime timestamp)
-{   
-    if (debug_on) cerr << "--> process" << endl;
+void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
+    c->frameCount++;
+    float *magnitude = new float[c->blockSize/2];
 
-    NNLSBase::baseProcess(inputBuffers, timestamp);
+    // make magnitude
+    float maxmag = -10000;
+    for (int iBin = 0; iBin < static_cast<int>(c->blockSize/2); iBin++) {
+        magnitude[iBin] = sqrt(fbuf[2 * iBin] * fbuf[2 * iBin] +
+                               fbuf[2 * iBin + 1] * fbuf[2 * iBin + 1]);
+        if (magnitude[iBin]>c->blockSize*1.0) magnitude[iBin] = c->blockSize; // a valid audio signal (between -1 and 1) should not be limited here.
+        if (maxmag < magnitude[iBin]) maxmag = magnitude[iBin];
+    }
 
-    return FeatureSet();
+    if (maxmag < 2) {
+        for (int iBin = 0; iBin < static_cast<int>(c->blockSize/2); iBin++) {
+            magnitude[iBin] = 0;
+        }
+    }
+
+    // note magnitude mapping using pre-calculated matrix
+    float *nm  = new float[nNote]; // note magnitude
+    for (int iNote = 0; iNote < nNote; iNote++) {
+        nm[iNote] = 0; // initialise as 0
+    }
+    int binCount = 0;
+    for (vector<float>::iterator it = c->kernelValue.begin(); it != c->kernelValue.end(); ++it) {
+        nm[c->kernelNoteIndex[binCount]] += magnitude[c->kernelFftIndex[binCount]] * c->kernelValue[binCount];
+        binCount++;
+    }
+
+    float one_over_N = 1.0/c->frameCount;
+    // update means of complex tuning variables
+    for (int iBPS = 0; iBPS < nBPS; ++iBPS) c->meanTunings[iBPS] *= float(c->frameCount-1)*one_over_N;
+
+    for (int iTone = 0; iTone < round(nNote*0.62/nBPS)*nBPS+1; iTone = iTone + nBPS) {
+        for (int iBPS = 0; iBPS < nBPS; ++iBPS) c->meanTunings[iBPS] += nm[iTone + iBPS]*one_over_N;
+    }
+
+    LogSpectrum f1; // logfreqspec
+    f1.time = timestamp;
+    for (int iNote = 0; iNote < nNote; iNote++) {
+        f1.values.push_back(nm[iNote]);
+    }
+
+    // deletes
+    delete[] magnitude;
+    delete[] nm;
+
+    c->logSpectrum.push_back(f1); // remember note magnitude
 }
 
-Chordino::FeatureSet
-Chordino::getRemainingFeatures()
-{
-    // cerr << hw[0] << hw[1] << endl;
-    if (debug_on) cerr << "--> getRemainingFeatures" << endl;    
-    FeatureSet fsOut;
-    if (m_logSpectrum.size() == 0) return fsOut;
-    int nChord = m_chordnames.size();
+const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double done)) {
+    c->chords.clear();
+    c->notes.clear();
+    c->times.clear();
+    c->harmonicChange.clear();
+    c->logLikelihood.clear();
+    c->result = chordino_result_t();
+    if (c->logSpectrum.size() == 0) return &c->result;
+    int nChord = c->chordnames.size();
 
     // Reports frame of nFrame through a stage spanning from-to on the 0-1 scale
-    auto report = [](double from, double to, int frame, int nFrame) {
-        if (chordinoProgress) chordinoProgress(from + (to - from) * frame / nFrame);
+    auto report = [progress](double from, double to, int frame, int nFrame) {
+        if (progress) progress(from + (to - from) * frame / nFrame);
     };
 
     // L2 norm per candidate template. Raw dot-product scoring favours templates with
@@ -297,11 +319,11 @@ Chordino::getRemainingFeatures()
         double trebleSumSq = 0;
         int noteCount = 0;
         for (int iBin = 0; iBin < 12; iBin++) {
-            double v = m_chorddict[24 * iChord + iBin];
+            double v = c->chorddict[24 * iChord + iBin];
             bassSumSq += v * v;
         }
         for (int iBin = 12; iBin < 24; iBin++) {
-            double v = m_chorddict[24 * iChord + iBin];
+            double v = c->chorddict[24 * iChord + iBin];
             trebleSumSq += v * v;
             if (v > 0) noteCount++;
         }
@@ -316,75 +338,62 @@ Chordino::getRemainingFeatures()
     }
     //
     /**  Calculate Tuning
-         calculate tuning from (using the angle of the complex number defined by the 
+         calculate tuning from (using the angle of the complex number defined by the
          cumulative mean real and imag values)
     **/
     float meanTuningImag = 0;
     float meanTuningReal = 0;
     for (int iBPS = 0; iBPS < nBPS; ++iBPS) {
-        meanTuningReal += m_meanTunings[iBPS] * cosvalues[iBPS];
-        meanTuningImag += m_meanTunings[iBPS] * sinvalues[iBPS];
+        meanTuningReal += c->meanTunings[iBPS] * c->cosvalues[iBPS];
+        meanTuningImag += c->meanTunings[iBPS] * c->sinvalues[iBPS];
     }
     float normalisedtuning = atan2(meanTuningImag, meanTuningReal)/(2*M_PI);
     int intShift = floor(normalisedtuning * 3);
     float floatShift = normalisedtuning * 3 - intShift; // floatShift is a really bad name for this
 
     /** Tune Log-Frequency Spectrogram
-        calculate a tuned log-frequency spectrogram (currentTunedSpec): use the tuning estimated above (kinda f0) to 
+        calculate a tuned log-frequency spectrogram (currentTunedSpec): use the tuning estimated above (kinda f0) to
         perform linear interpolation on the existing log-frequency spectrogram (kinda currentLogSpectrum).
     **/
-    if (debug_on) cerr << endl << "[Chordino Plugin] Tuning Log-Frequency Spectrogram ... ";
-					
     int count;
-		
-    FeatureList tunedSpec;
-    int nFrame = m_logSpectrum.size();
-    // Frames an earlier call already worked the chroma out for (see m_rawChromas):
+
+    vector<vector<float> > tunedSpec;
+    int nFrame = c->logSpectrum.size();
+    // Frames an earlier call already worked the chroma out for (see rawChromas):
     // only the ones after them go through tuning and NNLS below.
-    int nCached = m_rawChromas.size();
+    int nCached = c->rawChromas.size();
     count = nCached;
-    
-    vector<Vamp::RealTime> timestamps;
+
+    vector<realtime_t> &timestamps = c->times;
     for (int iFrame = 0; iFrame < nFrame; iFrame++) {
-        timestamps.push_back(m_logSpectrum[iFrame].timestamp);
+        timestamps.push_back(c->logSpectrum[iFrame].time);
     }
 
     report(0, progressTuning, count, nFrame);
-    for (FeatureList::iterator i = m_logSpectrum.begin() + nCached; i != m_logSpectrum.end(); ++i) {
-        Feature currentLogSpectrum = *i;
-        Feature currentTunedSpec; // tuned log-frequency spectrum
-        currentTunedSpec.hasTimestamp = true;
-        currentTunedSpec.timestamp = currentLogSpectrum.timestamp;
-        currentTunedSpec.values.push_back(0.0); currentTunedSpec.values.push_back(0.0); // set lower edge to zero
-		
-        if (m_tuneLocal) {
-            intShift = floor(m_localTuning[count] * 3);
-            floatShift = m_localTuning[count] * 3 - intShift; // floatShift is a really bad name for this
+    for (vector<LogSpectrum>::iterator i = c->logSpectrum.begin() + nCached; i != c->logSpectrum.end(); ++i) {
+        const vector<float> &currentLogSpectrum = i->values;
+        vector<float> currentTunedSpec; // tuned log-frequency spectrum
+        currentTunedSpec.push_back(0.0); currentTunedSpec.push_back(0.0); // set lower edge to zero
+
+        for (int k = 2; k < (int)currentLogSpectrum.size() - 3; ++k) { // interpolate all inner bins
+            float tempValue = currentLogSpectrum[k + intShift] * (1-floatShift) + currentLogSpectrum[k+intShift+1] * floatShift;
+            currentTunedSpec.push_back(tempValue);
         }
-		        
-        // cerr << intShift << " " << floatShift << endl;
-		        
-        for (int k = 2; k < (int)currentLogSpectrum.values.size() - 3; ++k) { // interpolate all inner bins
-            float tempValue = currentLogSpectrum.values[k + intShift] * (1-floatShift) + currentLogSpectrum.values[k+intShift+1] * floatShift;
-            currentTunedSpec.values.push_back(tempValue);
-        }
-		        
-        currentTunedSpec.values.push_back(0.0); currentTunedSpec.values.push_back(0.0); currentTunedSpec.values.push_back(0.0); // upper edge
-        vector<float> runningmean = SpecialConvolution(currentTunedSpec.values,hw);
+
+        currentTunedSpec.push_back(0.0); currentTunedSpec.push_back(0.0); currentTunedSpec.push_back(0.0); // upper edge
+        vector<float> runningmean = SpecialConvolution(currentTunedSpec,c->hw);
         vector<float> runningstd;
         for (int i = 0; i < nNote; i++) { // first step: squared values into vector (variance)
-            runningstd.push_back((currentTunedSpec.values[i] - runningmean[i]) * (currentTunedSpec.values[i] - runningmean[i]));
+            runningstd.push_back((currentTunedSpec[i] - runningmean[i]) * (currentTunedSpec[i] - runningmean[i]));
         }
-        runningstd = SpecialConvolution(runningstd,hw); // second step convolve
-        for (int i = 0; i < nNote; i++) { 
+        runningstd = SpecialConvolution(runningstd,c->hw); // second step convolve
+        for (int i = 0; i < nNote; i++) {
             runningstd[i] = sqrt(runningstd[i]); // square root to finally have running std
             if (runningstd[i] > 0) {
-                // currentTunedSpec.values[i] = (currentTunedSpec.values[i] / runningmean[i]) > thresh ? 
-                // 		                    (currentTunedSpec.values[i] - runningmean[i]) / pow(runningstd[i],m_whitening) : 0;
-                currentTunedSpec.values[i] = (currentTunedSpec.values[i] - runningmean[i]) > 0 ?
-                    (currentTunedSpec.values[i] - runningmean[i]) / pow(runningstd[i],m_whitening) : 0;
+                currentTunedSpec[i] = (currentTunedSpec[i] - runningmean[i]) > 0 ?
+                    (currentTunedSpec[i] - runningmean[i]) / pow(runningstd[i],whitening) : 0;
             }
-            if (currentTunedSpec.values[i] < 0) {
+            if (currentTunedSpec[i] < 0) {
                 cerr << "ERROR: negative value in logfreq spectrum" << endl;
             }
         }
@@ -392,155 +401,88 @@ Chordino::getRemainingFeatures()
         count++;
         report(0, progressTuning, count, nFrame);
     }
-    if (debug_on) cerr << "done." << endl;
-	    
+
     /** Semitone spectrum and chromagrams
         Semitone-spaced log-frequency spectrum derived from the tuned log-freq spectrum above. the spectrum
         is inferred using a non-negative least squares algorithm.
-        Three different kinds of chromagram are calculated, "treble", "bass", and "both" (which means 
+        Three different kinds of chromagram are calculated, "treble", "bass", and "both" (which means
         bass and treble stacked onto each other).
     **/
-    if (m_useNNLS == 0) {
-        if (debug_on) cerr << "[Chordino Plugin] Mapping to semitone spectrum and chroma ... ";
-    } else {
-        if (debug_on) cerr << "[Chordino Plugin] Performing NNLS and mapping to chroma ... ";
-    }
-
-	    
     vector<vector<double> > chordogram;
-    vector<vector<int> > scoreChordogram;
-    vector<float> chordchange = vector<float>(nFrame,0);
+    vector<float> &chordchange = c->harmonicChange;
+    chordchange.assign(nFrame, 0);
     count = nCached;
-
-    FeatureList chromaList;
 
     bool clipwarned = false;
 
 #ifdef CHORDINO_INSPECT
     vector<vector<float> > inspectSemitones;
-    chordinoInspectBegin(m_chordnames);
+    chordinoInspectBegin(c->chordnames);
 #endif
 
-    for (FeatureList::iterator it = tunedSpec.begin(); it != tunedSpec.end(); ++it) {
-        Feature currentTunedSpec = *it; // logfreq spectrum
-        Feature currentChromas; // treble and bass chromagram
-
-        currentChromas.hasTimestamp = true;
-        currentChromas.timestamp = currentTunedSpec.timestamp;    
+    for (vector<vector<float> >::iterator it = tunedSpec.begin(); it != tunedSpec.end(); ++it) {
+        const vector<float> &currentTunedSpec = *it; // logfreq spectrum
 
         float b[nNote];
-	
+
         bool some_b_greater_zero = false;
         float sumb = 0;
         for (int i = 0; i < nNote; i++) {
-            // b[i] = m_dict[(nNote * count + i) % (nNote * 84)];
-            b[i] = currentTunedSpec.values[i];
+            b[i] = currentTunedSpec[i];
             sumb += b[i];
             if (b[i] > 0) {
                 some_b_greater_zero = true;
-            }            
+            }
         }
-	    
+
         // here's where the non-negative least squares algorithm calculates the note activation x
-	
+
         vector<float> chroma = vector<float>(12, 0);
         vector<float> basschroma = vector<float>(12, 0);
-        float currval;
-        int iSemitone = 0;
 #ifdef CHORDINO_INSPECT
         float semitones[84] = {0};
 #endif
-			
+
         if (some_b_greater_zero) {
-            if (m_useNNLS == 0) {
-                for (int iNote = nBPS/2 + 2; iNote < nNote - nBPS/2; iNote += nBPS) {
-                    currval = 0;
-                    for (int iBPS = -nBPS/2; iBPS < nBPS/2+1; ++iBPS) {
-                        currval += b[iNote + iBPS] * (1-abs(iBPS*1.0/(nBPS/2+1)));						
-                    }
-                    chroma[iSemitone % 12] += currval * treblewindow[iSemitone];
-                    basschroma[iSemitone % 12] += currval * basswindow[iSemitone];
+            float x[84+1000];
+            for (int i = 1; i < 1084; ++i) x[i] = 1.0;
+            vector<int> signifIndex;
+            int index=0;
+            sumb /= 84.0;
+            for (int iNote = nBPS/2 + 2; iNote < nNote - nBPS/2; iNote += nBPS) {
+                float currval = 0;
+                for (int iBPS = -nBPS/2; iBPS < nBPS/2+1; ++iBPS) {
+                    currval += b[iNote + iBPS];
+                }
+                if (currval > 0) signifIndex.push_back(index);
+                index++;
+            }
+            float rnorm;
+            float w[84+1000];
+            float zz[84+1000];
+            int indx[84+1000];
+            int mode;
+            int dictsize = nNote*signifIndex.size();
+            float *curr_dict = new float[dictsize];
+            for (int iNote = 0; iNote < (int)signifIndex.size(); ++iNote) {
+                for (int iBin = 0; iBin < nNote; iBin++) {
+                    curr_dict[iNote * nNote + iBin] = 1.0 * c->dict[signifIndex[iNote] * nNote + iBin];
+                }
+            }
+            nnls(curr_dict, nNote, nNote, signifIndex.size(), b, x, &rnorm, w, zz, indx, &mode);
+            delete [] curr_dict;
+            for (int iNote = 0; iNote < (int)signifIndex.size(); ++iNote) {
+                chroma[signifIndex[iNote] % 12] += x[iNote] * treblewindow[signifIndex[iNote]];
+                basschroma[signifIndex[iNote] % 12] += x[iNote] * basswindow[signifIndex[iNote]];
 #ifdef CHORDINO_INSPECT
-                    semitones[iSemitone] = currval;
+                semitones[signifIndex[iNote]] = x[iNote];
 #endif
-                    iSemitone++;
-                }
-		        
-            } else {
-                float x[84+1000];
-                for (int i = 1; i < 1084; ++i) x[i] = 1.0;
-                vector<int> signifIndex;
-                int index=0;
-                sumb /= 84.0;
-                for (int iNote = nBPS/2 + 2; iNote < nNote - nBPS/2; iNote += nBPS) {
-                    float currval = 0;
-                    for (int iBPS = -nBPS/2; iBPS < nBPS/2+1; ++iBPS) {
-                        currval += b[iNote + iBPS]; 
-                    }
-                    if (currval > 0) signifIndex.push_back(index);
-                    index++;
-                }
-                float rnorm;
-                float w[84+1000];
-                float zz[84+1000];
-                int indx[84+1000];
-                int mode;
-                int dictsize = nNote*signifIndex.size();
-                // cerr << "dictsize is " << dictsize << "and values size" << f3.values.size()<< endl;
-                float *curr_dict = new float[dictsize];
-                for (int iNote = 0; iNote < (int)signifIndex.size(); ++iNote) {
-                    for (int iBin = 0; iBin < nNote; iBin++) {
-                        curr_dict[iNote * nNote + iBin] = 1.0 * m_dict[signifIndex[iNote] * nNote + iBin];
-                    }
-                }
-                nnls(curr_dict, nNote, nNote, signifIndex.size(), b, x, &rnorm, w, zz, indx, &mode);
-                delete [] curr_dict;
-                for (int iNote = 0; iNote < (int)signifIndex.size(); ++iNote) {
-                    // cerr << mode << endl;
-                    chroma[signifIndex[iNote] % 12] += x[iNote] * treblewindow[signifIndex[iNote]];
-                    basschroma[signifIndex[iNote] % 12] += x[iNote] * basswindow[signifIndex[iNote]];
-#ifdef CHORDINO_INSPECT
-                    semitones[signifIndex[iNote]] = x[iNote];
-#endif
-                }
-            }	
+            }
         }
 
-        vector<float> origchroma = chroma;
         chroma.insert(chroma.begin(), basschroma.begin(), basschroma.end()); // just stack the both chromas
-        currentChromas.values = chroma;
-        m_rawChromas.push_back(chroma);
+        c->rawChromas.push_back(chroma);
 
-        if (m_doNormalizeChroma > 0) {
-            vector<float> chromanorm = vector<float>(3,0);			
-            switch (int(m_doNormalizeChroma)) {
-            case 0: // should never end up here
-                break;
-            case 1:
-                chromanorm[0] = *max_element(origchroma.begin(), origchroma.end());
-                chromanorm[1] = *max_element(basschroma.begin(), basschroma.end());
-                chromanorm[2] = max(chromanorm[0], chromanorm[1]);
-                break;
-            case 2:
-                for (vector<float>::iterator it = chroma.begin(); it != chroma.end(); ++it) {
-                    chromanorm[2] += *it; 						
-                }
-                break;
-            case 3:
-                for (vector<float>::iterator it = chroma.begin(); it != chroma.end(); ++it) {
-                    chromanorm[2] += pow(*it,2); 						
-                }
-                chromanorm[2] = sqrt(chromanorm[2]);
-                break;
-            }
-            if (chromanorm[2] > 0) {
-                for (int i = 0; i < (int)chroma.size(); i++) {
-                    currentChromas.values[i] /= chromanorm[2];
-                }
-            }
-        }
-
-        chromaList.push_back(currentChromas);
 #ifdef CHORDINO_INSPECT
         inspectSemitones.push_back(vector<float>(semitones, semitones + 84));
 #endif
@@ -549,8 +491,7 @@ Chordino::getRemainingFeatures()
     }
 
     // Smoothed copy of the chroma used only for chord matching (see chromaEmaAlpha
-    // above); the raw per-frame chroma is left untouched for the exported
-    // chromagram feature and for tuning/normalisation, which should reflect the
+    // above); the raw per-frame chroma is left untouched, as it should reflect the
     // actual instantaneous signal.
     //
     // The integrator runs forwards and backwards and the two are averaged. A
@@ -565,16 +506,16 @@ Chordino::getRemainingFeatures()
         // Bins 0-11 are the bass chroma, 12-23 the treble one (stacked above).
         for (int i = 0; i < 24; i++) {
             double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
-            runningChroma[i] = iFrame == 0 ? m_rawChromas[iFrame][i]
-                : alpha * m_rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
+            runningChroma[i] = iFrame == 0 ? c->rawChromas[iFrame][i]
+                : alpha * c->rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
             smoothedChromas[iFrame][i] = runningChroma[i] / 2;
         }
     }
     for (int iFrame = nFrame - 1; iFrame >= 0; iFrame--) {
         for (int i = 0; i < 24; i++) {
             double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
-            runningChroma[i] = iFrame == nFrame - 1 ? m_rawChromas[iFrame][i]
-                : alpha * m_rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
+            runningChroma[i] = iFrame == nFrame - 1 ? c->rawChromas[iFrame][i]
+                : alpha * c->rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
             smoothedChromas[iFrame][i] += runningChroma[i] / 2;
         }
     }
@@ -589,15 +530,15 @@ Chordino::getRemainingFeatures()
         // Scores kept as scored, before the exponential and the normalisation below
         // discard how well each candidate actually fit (see the gate further down).
         vector<double> rawChordValue(nChord, 0.0);
-	        
+
         for (int iChord = 0; iChord < nChord; iChord++) {
             double bassMatch = 0;
             double trebleMatch = 0;
             for (int iBin = 0; iBin < 12; iBin++) {
-                bassMatch += m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
+                bassMatch += c->chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
             for (int iBin = 12; iBin < 24; iBin++) {
-                trebleMatch += m_chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
+                trebleMatch += c->chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
             tempchordvalue = trebleMatch / trebleNorm[iChord]
                 + bassWeight * bassMatch / bassNorm[iChord];
@@ -636,7 +577,7 @@ Chordino::getRemainingFeatures()
             if (iChord % 12 == bestChord % 12) continue;
             int sharedNotes = 0;
             for (int iBin = 12; iBin < 24; iBin++) {
-                if (m_chorddict[24 * iChord + iBin] > 0 && m_chorddict[24 * bestChord + iBin] > 0) sharedNotes++;
+                if (c->chorddict[24 * iChord + iBin] > 0 && c->chorddict[24 * bestChord + iBin] > 0) sharedNotes++;
             }
             if (sharedNotes >= 2) continue;
             if (rawChordValue[iChord] > bestRivalRoot) bestRivalRoot = rawChordValue[iChord];
@@ -678,80 +619,68 @@ Chordino::getRemainingFeatures()
         else if (!confident) gate = 2;
         // Only frames this call ran NNLS on have their chroma and semitones here
         bool fresh = iFrame >= nCached;
-        chordinoInspectFrame(timestamps[iFrame].sec + timestamps[iFrame].nsec / 1e9,
-                             fresh ? &chromaList[iFrame - nCached].values : nullptr,
+        chordinoInspectFrame(realtime_to_seconds(timestamps[iFrame]),
+                             fresh ? &c->rawChromas[iFrame] : nullptr,
                              smoothedChroma, currentChordSalience,
                              fresh ? inspectSemitones[iFrame - nCached].data() : nullptr, gate);
 #endif
         report(progressChroma, progressSalience, iFrame + 1, nFrame);
     }
-    if (debug_on) cerr << "done." << endl;
-		
-    vector<Feature> oldnotes;
 
-    if (debug_on) cerr << "[Chordino Plugin] HMM Chord Estimation ... ";
+    vector<chordino_note_t> oldnotes;
+
     double selftransprob = 0.99;
- 
+
     // Uniform prior: forcing init[nChord-1]=1 (N) here makes every decode assume the
     // previous state was "no chord", which is only true at the very start of a session.
-    // With periodic resetProcess() calls (real-time streaming), that false certainty
+    // With periodic resets (real-time streaming), that false certainty
     // reintroduces a spurious N bias at every reset boundary, since selftransprob makes
     // it costly for the Viterbi path to leave N even when real chord evidence is strong.
     vector<double> init = vector<double>(nChord,1.0/nChord);
-    
+
     double *delta;
-    delta = (double *)malloc(sizeof(double)*nFrame*nChord);                
-    
+    delta = (double *)malloc(sizeof(double)*nFrame*nChord);
+
     vector<vector<double> > trans;
     for (int iChord = 0; iChord < nChord; iChord++) {
-        vector<double> temp = vector<double>(nChord,(1-selftransprob)/(nChord-1));            
+        vector<double> temp = vector<double>(nChord,(1-selftransprob)/(nChord-1));
         temp[iChord] = selftransprob;
         trans.push_back(temp);
     }
     vector<double> scale;
     vector<int> chordpath = ViterbiPath(init, trans, chordogram, delta, &scale);
-    
+
     auto prepareChordNotes = [&](int iFrame) {
-        for (int iNote = 0; iNote < (int)m_chordnotes[chordpath[iFrame]].size(); ++iNote) { // prepare notes of current chord
-            Feature chordnote_feature;
-            chordnote_feature.hasTimestamp = true;
-            chordnote_feature.timestamp = timestamps[iFrame];
-            chordnote_feature.values.push_back(m_chordnotes[chordpath[iFrame]][iNote]);
-            chordnote_feature.hasDuration = true;
-            chordnote_feature.duration = -timestamps[iFrame]; // this will be corrected at the next chord
-            oldnotes.push_back(chordnote_feature);
+        for (int iNote = 0; iNote < (int)c->chordnotes[chordpath[iFrame]].size(); ++iNote) { // prepare notes of current chord
+            chordino_note_t note;
+            note.midi = c->chordnotes[chordpath[iFrame]][iNote];
+            note.time = timestamps[iFrame];
+            note.duration = realtime_negate(timestamps[iFrame]); // this will be corrected at the next chord
+            oldnotes.push_back(note);
         }
     };
 
-    Feature chord_feature; // chord estimate
-    chord_feature.hasTimestamp = true;
-    chord_feature.timestamp = timestamps[0];
-    chord_feature.label = m_chordnames[chordpath[0]];
-    fsOut[m_outputChords].push_back(chord_feature);
+    c->chords.push_back({c->chordnames[chordpath[0]].c_str(), timestamps[0]});
     // With the uniform prior the path no longer always starts on N, so track the first
     // chord as already emitted; otherwise it is reported again at the second frame.
     int oldchord = chordpath[0];
     prepareChordNotes(0);
-    
+
     chordchange[0] = 0;
     for (int iFrame = 1; iFrame < (int)chordpath.size(); ++iFrame) {
         if (chordpath[iFrame] != oldchord ) {
             // chord
-            Feature chord_feature; // chord estimate
-            chord_feature.hasTimestamp = true;
-            chord_feature.timestamp = timestamps[iFrame];
-            chord_feature.label = m_chordnames[chordpath[iFrame]];
-            fsOut[m_outputChords].push_back(chord_feature);
-            oldchord = chordpath[iFrame];         
+            c->chords.push_back({c->chordnames[chordpath[iFrame]].c_str(), timestamps[iFrame]});
+            oldchord = chordpath[iFrame];
             // chord notes
             for (int iNote = 0; iNote < (int)oldnotes.size(); ++iNote) { // finish duration of old chord
-                oldnotes[iNote].duration = oldnotes[iNote].duration + timestamps[iFrame];
-                fsOut[m_outputChordnotes].push_back(oldnotes[iNote]);
+                oldnotes[iNote].duration = realtime_add(oldnotes[iNote].duration, timestamps[iFrame]);
+                c->notes.push_back(oldnotes[iNote]);
             }
             oldnotes.clear();
             prepareChordNotes(iFrame);
         }
-        /* calculating simple chord change prob */            
+        /* calculating simple chord change prob */
         for (int iChord = 0; iChord < nChord; iChord++) {
             double num = delta[(iFrame-1) * nChord + iChord];
             double denom = delta[iFrame * nChord + iChord];
@@ -760,44 +689,29 @@ Chordino::getRemainingFeatures()
             chordchange[iFrame-1] += num * log(num / denom + eps);
         }
     }
-    
-    float logscale = 0;
+
     for (int iFrame = 0; iFrame < nFrame; ++iFrame) {
-        logscale -= log(scale[iFrame]);
-        Feature loglikelihood;
-        loglikelihood.hasTimestamp = true;
-        loglikelihood.timestamp = timestamps[iFrame];
-        loglikelihood.values.push_back(-log(scale[iFrame]));
-        // cerr << chordchange[iFrame] << endl;
-        fsOut[m_outputLoglikelihood].push_back(loglikelihood);
+        c->logLikelihood.push_back(-log(scale[iFrame]));
     }
-    logscale /= nFrame;
 
-    chord_feature.hasTimestamp = true;
-    chord_feature.timestamp = timestamps[timestamps.size()-1];
-    chord_feature.label = "N";
-    fsOut[m_outputChords].push_back(chord_feature);
-    
+    c->chords.push_back({"N", timestamps[timestamps.size()-1]});
+
     for (int iNote = 0; iNote < (int)oldnotes.size(); ++iNote) { // finish duration of old chord
-        oldnotes[iNote].duration = oldnotes[iNote].duration + timestamps[timestamps.size()-1];
-        fsOut[m_outputChordnotes].push_back(oldnotes[iNote]);
-    }
-    
-    if (debug_on) cerr << "done." << endl;
-
-    for (int iFrame = 0; iFrame < nFrame; iFrame++) {
-        Feature chordchange_feature;
-        chordchange_feature.hasTimestamp = true;
-        chordchange_feature.timestamp = timestamps[iFrame];
-        chordchange_feature.values.push_back(chordchange[iFrame]);
-//        cerr << "putting value " << chordchange[iFrame] << " at time " << chordchange_feature.timestamp << endl;
-        fsOut[m_outputHarmonicChange].push_back(chordchange_feature);
+        oldnotes[iNote].duration = realtime_add(oldnotes[iNote].duration, timestamps[timestamps.size()-1]);
+        c->notes.push_back(oldnotes[iNote]);
     }
 
     free(delta);
-    
-    // for (int iFrame = 0; iFrame < nFrame; iFrame++) cerr << fsOut[m_outputHarmonicChange][iFrame].values[0] << endl;
-    
+
     report(progressSalience, 1, 1, 1);
-    return fsOut;     
+
+    c->result.chordCount = c->chords.size();
+    c->result.chords = c->chords.data();
+    c->result.noteCount = c->notes.size();
+    c->result.notes = c->notes.data();
+    c->result.frameCount = nFrame;
+    c->result.times = c->times.data();
+    c->result.harmonicChange = c->harmonicChange.data();
+    c->result.logLikelihood = c->logLikelihood.data();
+    return &c->result;
 }

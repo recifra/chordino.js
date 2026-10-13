@@ -22,7 +22,7 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 98 KB (47 KB gzipped) | Chordino, with KISS FFT |
+| `chordino.wasm` | 84 KB (41 KB gzipped) | Chordino, with KISS FFT |
 | `chordino.mjs` | 5 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |
@@ -216,12 +216,10 @@ python3 -m http.server -d examples
 
 ## Building and testing
 
-From a clone of this repository. You need emsdk, a checkout of the
-[Vamp plugin SDK](https://github.com/vamp-plugins/vamp-plugin-sdk) and Node.js:
+From a clone of this repository. You need emsdk and Node.js:
 
 ```sh
 npm install
-export VAMP_PATH=/path/to/vamp-plugin-sdk
 npm run build  # or npm run build:js, for the TypeScript alone
 npm test
 ```
@@ -233,13 +231,13 @@ npm test
 | Path | What it holds |
 | --- | --- |
 | `src/nnls-chroma/` | The NNLS Chroma / Chordino plugin source, adapted for this build |
+| `src/chordino.h` | `chordino_t`: Chordino, as functions instead of a Vamp plugin |
 | `src/chordextract.cpp` | The C functions `chordino.mjs` calls |
 | `src/chordextract.js` | The API `chordino.mjs` exposes over them |
 | `src/session.cpp`, `src/session.h` | What feeds Chordino: buffering and frame times |
 | `src/spectrum.c`, `src/spectrum.h` | `spectrum_t`: the spectra Chordino takes, windowed, through KISS FFT |
 | `src/window.c`, `src/window.h` | `window_t`: the Hann window, as Vamp's `Window` |
 | `src/realtime.c`, `src/realtime.h` | `realtime_t`: times in seconds and nanoseconds, as Vamp's `RealTime` |
-| `src/vamp-realtime.cpp` | The `Vamp::RealTime` members Chordino calls, over `realtime.c` |
 | `src/kissfft/` | KISS FFT 131.2.0 |
 | `src/inspect.cpp` | Extra bindings of the inspect build |
 | `src/js/` | The workers and the worklet, in TypeScript |
@@ -253,8 +251,11 @@ NNLS Chroma and Chordino are by Matthias Mauch, Centre for Digital Music, Queen
 Mary University of London, and are licensed under the GNU General Public License,
 version 2 or later (see [src/nnls-chroma/COPYING](src/nnls-chroma/COPYING)). The
 modules in `build/` are compiled from that code, so chordino.js is distributed
-under the same license (see [LICENSE](LICENSE)). The Vamp plugin SDK is by
-Chris Cannam and Queen Mary University of London, under a BSD-style license.
+under the same license (see [LICENSE](LICENSE)). `src/session.cpp`,
+`src/spectrum.c`, `src/window.c` and `src/realtime.c` are adapted from the Vamp
+plugin SDK, by Chris Cannam and Queen Mary University of London, under a
+BSD-style license (see [src/vamp-sdk-COPYING](src/vamp-sdk-COPYING), which the
+package includes).
 KISS FFT is by Mark Borgerding, under the BSD 3-clause license (see
 [src/kissfft/COPYING](src/kissfft/COPYING), which the package includes).
 

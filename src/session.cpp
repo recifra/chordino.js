@@ -3,20 +3,17 @@
 #include <cmath>
 #include <cstring>
 
-Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime) {
-    auto *chordino = new Chordino(sampleRate);
-    int stepSize = int(chordino->getPreferredStepSize());
-    int blockSize = int(chordino->getPreferredBlockSize());
-    if (!chordino->initialise(1, stepSize, blockSize)) {
-        delete chordino;
-        return nullptr;
-    }
-    // Numbers the outputs (m_outputChords and the like), which
-    // getRemainingFeatures files its features under
-    (void) chordino->getOutputDescriptors();
+namespace {
 
+void (*decodeProgress)(double done) = nullptr;
+
+}
+
+Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime) {
+    int stepSize = CHORDINO_STEP_SIZE;
+    int blockSize = CHORDINO_BLOCK_SIZE;
     auto *session = new Session();
-    session->chordino = chordino;
+    session->chordino = chordino_create(sampleRate);
     session->sampleRate = sampleRate;
     session->realtime = realtime;
     session->inputBlockSize = inputBlockSize;
@@ -30,7 +27,7 @@ Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime) {
 }
 
 void sessionRelease(Session *session) {
-    delete session->chordino;
+    chordino_destroy(session->chordino);
     delete[] session->pending;
     delete[] session->shifted;
     spectrum_destroy(session->spectrum);
@@ -42,7 +39,7 @@ void sessionReset(Session *session) {
     session->frame = 0;
     session->fed = false;
     session->analysed = 0;
-    session->chordino->reset();
+    chordino_reset(session->chordino);
 }
 
 namespace {
@@ -81,8 +78,7 @@ void analyse(Session *session, const float *block, realtime_t timestamp) {
     }
     session->analysed++;
 
-    const float *bins = spectrum_compute(session->spectrum, input);
-    session->chordino->process(&bins, Vamp::RealTime(timestamp.sec, timestamp.nsec));
+    chordino_process(session->chordino, spectrum_compute(session->spectrum, input), timestamp);
 }
 
 // Analyses the block at the start of pending and steps past stepSize samples of it
@@ -108,7 +104,7 @@ void sessionProcess(Session *session, const float *samples, realtime_t timestamp
     }
 }
 
-Vamp::Plugin::FeatureSet sessionFinish(Session *session) {
+const chordino_result_t *sessionFinish(Session *session) {
     // Only one block more, padded: the frames the last few samples were
     // centred on are not made up
     if (session->pendingCount > 0) {
@@ -117,5 +113,13 @@ Vamp::Plugin::FeatureSet sessionFinish(Session *session) {
         session->pendingCount = session->blockSize;
         step(session);
     }
-    return session->chordino->getRemainingFeatures();
+    return sessionDecode(session);
+}
+
+const chordino_result_t *sessionDecode(Session *session) {
+    return chordino_decode(session->chordino, decodeProgress);
+}
+
+void sessionSetProgress(void (*progress)(double done)) {
+    decodeProgress = progress;
 }

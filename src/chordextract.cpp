@@ -3,9 +3,6 @@
 #include <emscripten/emscripten.h>
 #include <cmath>
 
-using namespace std;
-using namespace Vamp;
-
 // The functions exported here are plain C ones; src/chordextract.js wraps them
 // in the API src/js/chordino.d.mts describes, without embind and its runtime.
 
@@ -42,7 +39,7 @@ void forwardProgress(double done) {
 extern "C" EMSCRIPTEN_KEEPALIVE
 void setProgressReports(bool enabled) {
     reportedPercent = -1;
-    chordinoProgress = enabled ? &forwardProgress : nullptr;
+    sessionSetProgress(enabled ? &forwardProgress : nullptr);
 }
 
 // Every frame is centred on its timestamp. Offline, that is done by delaying the
@@ -82,28 +79,9 @@ void processBuffer(
 
 namespace {
 
-int chordOutput(Plugin *plugin) {
-    Plugin::OutputList outputs = plugin->getOutputDescriptors();
-    for (int i = 0; i < int(outputs.size()); ++i)
-    {
-        if (outputs[i].identifier == "simplechord")
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-
-void pushChords(Plugin::FeatureSet &fs, int chordFeatureNo) {
-    if (chordFeatureNo < 0)
-    {
-        return;
-    }
-    Plugin::FeatureList& chordFeatures = fs[chordFeatureNo];
-    for (int i = 0; i < (int)chordFeatures.size(); ++i)
-    {
-        const RealTime &timestamp = chordFeatures[i].timestamp;
-        pushChord(chordFeatures[i].label.c_str(), realtime_to_seconds({timestamp.sec, timestamp.nsec}));
+void pushChords(const chordino_result_t *result) {
+    for (int i = 0; i < result->chordCount; ++i) {
+        pushChord(result->chords[i].label, realtime_to_seconds(result->chords[i].time));
     }
 }
 
@@ -113,26 +91,18 @@ void pushChords(Plugin::FeatureSet &fs, int chordFeatureNo) {
 // pending are padded with zeros to make up a whole frame.
 extern "C" EMSCRIPTEN_KEEPALIVE
 void getResult(Session *session) {
-    int chordFeatureNo = chordOutput(session->chordino);
-    if (chordFeatureNo < 0)
-    {
-        return;
-    }
-    // features at end of processing (actually Chordino does all its work here)
-    Plugin::FeatureSet fs = sessionFinish(session);
-    pushChords(fs, chordFeatureNo);
+    // Chordino does nearly all of its work here
+    pushChords(sessionFinish(session));
 }
 
 // Chords of the frames analysed so far, for a caller that goes on feeding audio
-// afterwards (the realtime worklet). It asks Chordino directly, which can decode
-// its frames any number of times. Finishing the session like getResult does
-// would pad its pending samples with zeros, and the audio fed next would then
-// follow those zeros: a gap in the signal on every read.
+// afterwards (the realtime worklet). Chordino can decode its frames any number
+// of times. Finishing the session like getResult does would pad its pending
+// samples with zeros, and the audio fed next would then follow those zeros: a
+// gap in the signal on every read.
 extern "C" EMSCRIPTEN_KEEPALIVE
 void getPartialResult(Session *session) {
-    auto *chordino = session->chordino;
-    Plugin::FeatureSet fs = chordino->getRemainingFeatures();
-    pushChords(fs, chordOutput(chordino));
+    pushChords(sessionDecode(session));
 }
 
 // Forgets the frames from before the given time (in the clock processBuffer was
@@ -140,5 +110,5 @@ void getPartialResult(Session *session) {
 // goes on. The tuning estimate still counts them.
 extern "C" EMSCRIPTEN_KEEPALIVE
 void forgetBefore(Session *session, long milliseconds) {
-    session->chordino->forgetFramesBefore(milliseconds / 1000.0);
+    chordino_forget_before(session->chordino, realtime_from_seconds(milliseconds / 1000.0));
 }

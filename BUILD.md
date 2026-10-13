@@ -2,7 +2,6 @@
 
 ## Requirements
 - emsdk (`emcc` on the PATH)
-- vamp-plugin-sdk, for its plugin headers
 - Node.js, for TypeScript, esbuild and the tests (`npm install`)
 
 ## Build
@@ -10,27 +9,26 @@ Run from the repository root.
 
 ```sh
 npm install
-export VAMP_PATH=$HOME/Development/github/vamp-plugin-sdk
 npm run build
 ```
 
 `npm run build` runs both halves, which can also run on their own:
 
 - `npm run build:wasm` compiles the C++ with `emcc`; the commands and flags are
-  in `src/build.sh`. Needs `VAMP_PATH`. The production module force-includes
+  in `src/build.sh`. The production module force-includes
   `src/noiostream.h`, which drops every `std::cerr` write so that libc++'s
   streams stay out of the wasm (they were more than half of it); the inspect
   build keeps them. Anything new that formats text should do it without
-  streams or `printf`, or the size comes back. No Vamp SDK source is
-  compiled, only its plugin headers, which Chordino still builds on:
-  `src/session.cpp` and `src/spectrum.c` do what its `PluginBufferingAdapter`
-  and `PluginInputDomainAdapter` did, with the same results, over KISS FFT
-  131.2.0 in `src/kissfft/` (the files the build uses, unchanged), with the
-  Hann window of its `Window` in `src/window.c`, and `src/realtime.c` does its
-  `RealTime` arithmetic step for step;
-  `src/vamp-realtime.cpp` defines the two `Vamp::RealTime` members Chordino
-  calls over it. `src/kissfft.c` compiles KISS FFT with `NDEBUG`, for that file
-  only, as its error messages would bring `fprintf` back.
+  streams or `printf`, or the size comes back. The Vamp SDK is no longer
+  needed: Chordino, a Vamp plugin upstream, is the `chordino_t` of
+  `src/chordino.h`, with no descriptors or parameters (they are constants in
+  `src/nnls-chroma/Chordino.cpp`); `src/session.cpp` and `src/spectrum.c` do
+  what the SDK's `PluginBufferingAdapter` and `PluginInputDomainAdapter` did,
+  with the same results, over KISS FFT 131.2.0 in `src/kissfft/` (the files
+  the build uses, unchanged), with the Hann window of its `Window` in
+  `src/window.c`, and `src/realtime.c` does its `RealTime` arithmetic step for
+  step. `src/kissfft.c` compiles KISS FFT with `NDEBUG`, for that file only,
+  as its error messages would bring `fprintf` back.
 - `npm run build:js` type-checks the TypeScript in `src/js/` (`tsc -b src/js`),
   has esbuild minify it into ES modules and copies `src/js/chordino.d.mts`
   next to them. It needs no `emcc`, so after a change to the workers or the
@@ -69,7 +67,7 @@ Everything lands in `build/`:
   below. Not for apps, and not in the package.
 
 An app ships the five files at the top of `build/` together, in one directory.
-The two workers share the one `.wasm` (5 KB + 98 KB; the old single-file
+The two workers share the one `.wasm` (5 KB + 84 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
 2 and 1 KB of their own.
 
@@ -112,7 +110,8 @@ npm test
 ## Publishing
 The npm package is `chordino.js`. Its contents are the `files` listed in
 `package.json` (the five files an app ships, plus `chordino.d.mts` and the KISS
-FFT license, as the wasm carries it) along with `README.md` and `LICENSE`; `exports` maps `chordino.js` to `chordino.mjs`, and
+FFT and Vamp SDK licenses, as the wasm carries code of both) along with
+`README.md` and `LICENSE`; `exports` maps `chordino.js` to `chordino.mjs`, and
 `chordino.js/chord-worker.mjs`, `chordino.js/chord-live-worker.mjs`,
 `chordino.js/chord-processor.mjs` and `chordino.js/chordino.wasm` to the files
 in `build/`. `npm publish` first runs

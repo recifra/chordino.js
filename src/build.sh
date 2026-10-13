@@ -3,21 +3,19 @@
 #   chordino.mjs, chordino.wasm    production module, shared by the Web Worker
 #                                  and the AudioWorklet (npm run build:js)
 #   inspect/chordino-inspect.js    inspection build for examples/player
-# Needs emcc on the PATH and VAMP_PATH pointing at a vamp-plugin-sdk checkout,
-# for its plugin headers.
+# Needs emcc on the PATH.
 set -e
 cd "$(dirname "$0")"
-: "${VAMP_PATH:?set VAMP_PATH to the vamp-plugin-sdk checkout}"
 
 OUT=../build
-SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/NNLSBase.cpp nnls-chroma/chromamethods.cpp
-    nnls-chroma/viterbi.cpp nnls-chroma/nnls.c session.cpp spectrum.c window.c
-    kissfft.c realtime.c vamp-realtime.cpp chordextract.cpp"
-# No Vamp SDK source, only its plugin headers: session.cpp and spectrum.c do
-# what its host adapters did, window.c what its Window did and realtime.c what
-# its RealTime did. The FFT in double
-# precision, as the Vamp SDK ran it, in every file that includes kissfft.
-FLAGS="-I$VAMP_PATH -Dkiss_fft_scalar=double"
+SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/chromamethods.cpp nnls-chroma/viterbi.cpp
+    nnls-chroma/nnls.c session.cpp spectrum.c window.c kissfft.c realtime.c
+    chordextract.cpp"
+# Nothing of the Vamp SDK: session.cpp and spectrum.c do what its host adapters
+# did, window.c what its Window did and realtime.c what its RealTime did. The
+# FFT in double precision, as the Vamp SDK ran it, in every file that includes
+# kissfft.
+FLAGS="-Dkiss_fft_scalar=double"
 mkdir -p "$OUT/inspect"
 
 # One ES module plus one .wasm, so an app shipping both the worker and the

@@ -42,6 +42,11 @@ realtime_t realtime_negate(realtime_t time) {
     return realtime_make(-time.sec, -time.nsec);
 }
 
+int realtime_compare(realtime_t a, realtime_t b) {
+    if (a.sec != b.sec) return a.sec < b.sec ? -1 : 1;
+    return a.nsec < b.nsec ? -1 : a.nsec > b.nsec ? 1 : 0;
+}
+
 long realtime_to_frame(realtime_t time, unsigned int sampleRate) {
     if (time.sec < 0 || (time.sec == 0 && time.nsec < 0)) {
         return -realtime_to_frame(realtime_negate(time), sampleRate);

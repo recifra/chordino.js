@@ -45,7 +45,8 @@
     "build/chord-live-worker.mjs",
     "build/chord-processor.mjs",
     "src/kissfft/COPYING",
-    "src/kissfft/LICENSES/BSD-3-Clause"
+    "src/kissfft/LICENSES/BSD-3-Clause",
+    "src/vamp-sdk-COPYING"
   ],
   "scripts": {
     "build": "npm run build:wasm && npm run build:js",
