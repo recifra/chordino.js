@@ -2,4 +2,6 @@
 src/chordino.js
 src/nnls-chroma/chordextract
 node_modules
+training
 src/chordino-inspect.js
+build
