@@ -24,14 +24,11 @@ Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime) {
     session->blockSize = blockSize;
     session->pending = new float[blockSize + inputBlockSize];
     session->shifted = new float[blockSize + blockSize / 2];
-    session->window = new double[blockSize];
+    session->window = window_create_hann(blockSize);
     session->windowed = new double[blockSize];
     session->fft = kiss_fftr_alloc(blockSize, 0, nullptr, nullptr);
     session->spectrum = new kiss_fft_cpx[blockSize / 2 + 1];
     session->bins = new float[blockSize + 2];
-    for (int i = 0; i < blockSize; ++i) {
-        session->window[i] = 0.5 - 0.5 * cos((2 * M_PI * i) / blockSize);
-    }
     sessionReset(session);
     return session;
 }
@@ -40,7 +37,7 @@ void sessionRelease(Session *session) {
     delete session->chordino;
     delete[] session->pending;
     delete[] session->shifted;
-    delete[] session->window;
+    window_destroy(session->window);
     delete[] session->windowed;
     kiss_fftr_free(session->fft);
     delete[] session->spectrum;
@@ -93,9 +90,7 @@ void analyse(Session *session, const float *block, realtime_t timestamp) {
     session->analysed++;
 
     double *windowed = session->windowed;
-    for (int i = 0; i < blockSize; ++i) {
-        windowed[i] = input[i] * session->window[i];
-    }
+    window_cut(session->window, input, windowed);
     // Centred on the start of the FFT, so the phases are those of the middle
     for (int i = 0; i < half; ++i) {
         double value = windowed[i];

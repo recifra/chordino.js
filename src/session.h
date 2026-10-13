@@ -4,6 +4,7 @@
 #include "nnls-chroma/Chordino.h"
 #include "kissfft/kiss_fftr.h"
 #include "realtime.h"
+#include "window.h"
 
 // What initializePlugin hands to JS as the instance: a Chordino and what feeds
 // it. It does what the Vamp host SDK's PluginBufferingAdapter and
@@ -23,7 +24,7 @@ struct Session {
     bool fed;
     float *shifted;         // not realtime: see analyse in session.cpp
     int analysed;           // blocks analysed since the start or the last reset
-    double *window;
+    window_t *window;       // Hann
     double *windowed;
     kiss_fftr_cfg fft;
     kiss_fft_cpx *spectrum;

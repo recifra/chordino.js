@@ -25,8 +25,9 @@ npm run build
   compiled, only its plugin headers, which Chordino still builds on:
   `src/session.cpp` does what its `PluginBufferingAdapter` and
   `PluginInputDomainAdapter` did, with the same results, over KISS FFT 131.2.0
-  in `src/kissfft/` (the files the build uses, unchanged), and
-  `src/realtime.c` does its `RealTime` arithmetic step for step;
+  in `src/kissfft/` (the files the build uses, unchanged), with the Hann
+  window of its `Window` in `src/window.c`, and `src/realtime.c` does its
+  `RealTime` arithmetic step for step;
   `src/vamp-realtime.cpp` defines the two `Vamp::RealTime` members Chordino
   calls over it. `src/kissfft.c` compiles KISS FFT with `NDEBUG`, for that file
   only, as its error messages would bring `fprintf` back.
