@@ -101,6 +101,31 @@ describe('inspect build', () => {
     }
   });
 
+  test('getPartialAnalysis has the bins of frames getPartialResult decoded first', async () => {
+    const { Module } = inspect;
+    const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
+    // Reads every 5 blocks, then all the bins
+    const analyze = (read) => {
+      const instance = Module.initializePlugin(sampleRate, 4096, true);
+      let block = 0;
+      try {
+        return feed(inspect, samples, sampleRate, () => Module.getPartialAnalysis(instance, -1), {
+          instance,
+          afterEach: () => {
+            if (++block % 5 === 0) read(instance);
+          },
+        });
+      } finally {
+        Module.releasePlugin(instance);
+      }
+    };
+    const afterResults = analyze((instance) => Module.getPartialResult(instance));
+    const afterAnalyses = analyze((instance) => Module.getPartialAnalysis(instance, -1));
+
+    assert.deepEqual(afterResults.chroma.values, afterAnalyses.chroma.values);
+    assert.deepEqual(afterResults.semitonespectrum.values, afterAnalyses.semitonespectrum.values);
+  });
+
   test('semitone bins start at A0', () => {
     const analysis = analyzeChords(inspect, synthChord(['C4'], 2, SAMPLE_RATE), SAMPLE_RATE);
     const peak = argmax(middleFrame(analysis, 'semitonespectrum'));

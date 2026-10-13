@@ -11,7 +11,6 @@
 #include <emscripten/emscripten.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <string.h>
 
 // Adds count doubles to a vector of floats
 static void pushDoubles(vector_t *floats, const double *values, int count) {
@@ -30,8 +29,6 @@ static struct {
     vector_t salience;
     vector_t semitones;
     vector_t gate;
-    bool anyFrame;
-    double firstFrame;
 } collected = {
     .times = {.size = sizeof(float)},
     .chroma = {.size = sizeof(float)},
@@ -50,51 +47,6 @@ static void forgetCollected(void) {
     vector_clear(&collected.salience);
     vector_clear(&collected.semitones);
     vector_clear(&collected.gate);
-    collected.anyFrame = false;
-    collected.firstFrame = 0;
-}
-
-// Chordino hands over a frame's chroma and semitones only the first time it
-// decodes it (see rawChromas in chordino.c), so while getPartialAnalysis is in use
-// they are kept here, by frame time, for the calls after that: in order of time,
-// one entry per time.
-typedef struct {
-    double time;
-    float chroma[24];
-    float semitones[84];
-} remembered_t;
-
-static vector_t remembered = {.size = sizeof(remembered_t)};
-static const float noChroma[24];
-static const float noSemitones[84];
-
-// The first entry not before time
-static int rememberedFrom(double time) {
-    const remembered_t *entries = remembered.data;
-    int low = 0, high = remembered.count;
-    while (low < high) {
-        int middle = (low + high) / 2;
-        if (entries[middle].time < time) low = middle + 1;
-        else high = middle;
-    }
-    return low;
-}
-
-// The entry for time, or null
-static remembered_t *rememberedAt(double time) {
-    int at = rememberedFrom(time);
-    remembered_t *entry = (remembered_t *) remembered.data + at;
-    return at < remembered.count && entry->time == time ? entry : NULL;
-}
-
-static void remember(double time, const float *chroma, const float *semitones) {
-    remembered_t *entry = rememberedAt(time);
-    if (!entry) {
-        entry = vector_insert(&remembered, rememberedFrom(time), NULL, 1);
-        entry->time = time;
-    }
-    memcpy(entry->chroma, chroma, sizeof(entry->chroma));
-    memcpy(entry->semitones, semitones, sizeof(entry->semitones));
 }
 
 // Set while getPartialAnalysis runs: frames up to this time are not collected.
@@ -113,22 +65,9 @@ void chordino_inspect_frame(double time,
                             const double *salience,
                             const float *semitones,
                             int gate) {
-    if (!collected.anyFrame) {
-        collected.anyFrame = true;
-        collected.firstFrame = time;
-    }
-    if (chroma && partial) {
-        remember(time, chroma, semitones);
-    }
     // As a float, like the times handed to JS, which is where collectAfter comes from
     if (partial && (float) time <= collectAfter) {
         return;
-    }
-    if (!chroma) {
-        const remembered_t *kept = rememberedAt(time);
-        // Decoded before getPartialAnalysis was first called: nothing was kept
-        chroma = kept ? kept->chroma : noChroma;
-        semitones = kept ? kept->semitones : noSemitones;
     }
     float frameTime = time;
     vector_push(&collected.times, &frameTime, 1);
@@ -206,9 +145,5 @@ void getPartialAnalysis(session_t *session, double afterSeconds) {
     collectAfter = afterSeconds;
     const chordino_result_t *decoded = session_decode(session);
     partial = false;
-    // Frames before the first one decoded have been forgotten for good
-    if (collected.anyFrame) {
-        vector_erase(&remembered, 0, rememberedFrom(collected.firstFrame));
-    }
     analysisResult(decoded);
 }

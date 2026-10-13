@@ -112,6 +112,11 @@ struct chordino {
     // estimated when they were first decoded. Chord matching runs on a smoothed
     // copy.
     vector_t rawChromas;
+#ifdef CHORDINO_INSPECT
+    // The 84 semitone activations NNLS found for each of those frames, for
+    // chordino_inspect_frame
+    vector_t semitones;
+#endif
     float meanTunings[nBPS];
     float sinvalues[nBPS];
     float cosvalues[nBPS];
@@ -140,6 +145,9 @@ chordino_t *chordino_create(float sampleRate) {
     c->frameTimes = vector_create(sizeof(realtime_t));
     c->logSpectrum = vector_create(nNote * sizeof(float));
     c->rawChromas = vector_create(24 * sizeof(float));
+#ifdef CHORDINO_INSPECT
+    c->semitones = vector_create(84 * sizeof(float));
+#endif
     c->chords = vector_create(sizeof(chordino_chord_t));
     c->notes = vector_create(sizeof(chordino_note_t));
     c->times = vector_create(sizeof(realtime_t));
@@ -213,6 +221,9 @@ void chordino_destroy(chordino_t *c) {
     vector_destroy(&c->frameTimes);
     vector_destroy(&c->logSpectrum);
     vector_destroy(&c->rawChromas);
+#ifdef CHORDINO_INSPECT
+    vector_destroy(&c->semitones);
+#endif
     vector_destroy(&c->chords);
     vector_destroy(&c->notes);
     vector_destroy(&c->times);
@@ -230,6 +241,9 @@ void chordino_reset(chordino_t *c) {
         c->meanTunings[iBPS] = 0;
     }
     vector_clear(&c->rawChromas);
+#ifdef CHORDINO_INSPECT
+    vector_clear(&c->semitones);
+#endif
 }
 
 void chordino_forget_before(chordino_t *c, realtime_t start) {
@@ -238,7 +252,11 @@ void chordino_forget_before(chordino_t *c, realtime_t start) {
     while (drop < c->frameTimes.count && realtime_compare(frameTimes[drop], start) < 0) drop++;
     vector_erase(&c->frameTimes, 0, drop);
     vector_erase(&c->logSpectrum, 0, drop);
-    vector_erase(&c->rawChromas, 0, drop < c->rawChromas.count ? drop : c->rawChromas.count);
+    int dropChroma = drop < c->rawChromas.count ? drop : c->rawChromas.count;
+    vector_erase(&c->rawChromas, 0, dropChroma);
+#ifdef CHORDINO_INSPECT
+    vector_erase(&c->semitones, 0, dropChroma);
+#endif
 }
 
 void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
@@ -433,7 +451,6 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 
 #ifdef CHORDINO_INSPECT
     bool clipwarned = false;
-    float *inspectSemitones = calloc((nFresh > 0 ? nFresh : 1) * 84, sizeof(float));
     chordino_inspect_begin(nChord, c->dictionary->names);
 #endif
 
@@ -454,6 +471,9 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 
         // the bass chroma (0-11) stacked under the treble one (12-23), zeros to start
         float *chroma = vector_push(&c->rawChromas, NULL, 1);
+#ifdef CHORDINO_INSPECT
+        float *semitones = vector_push(&c->semitones, NULL, 1);
+#endif
 
         if (some_b_greater_zero) {
             float x[84+1000];
@@ -486,7 +506,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
                 chroma[12 + signifIndex[iNote] % 12] += x[iNote] * treblewindow[signifIndex[iNote]];
                 chroma[signifIndex[iNote] % 12] += x[iNote] * basswindow[signifIndex[iNote]];
 #ifdef CHORDINO_INSPECT
-                inspectSemitones[iFresh * 84 + signifIndex[iNote]] = x[iNote];
+                semitones[signifIndex[iNote]] = x[iNote];
 #endif
             }
         }
@@ -624,12 +644,9 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         int gate = 0;
         if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
         else if (!confident) gate = 2;
-        // Only frames this call ran NNLS on have their chroma and semitones here
-        bool fresh = iFrame >= nCached;
         chordino_inspect_frame(realtime_to_seconds(timestamps[iFrame]),
-                               fresh ? rawChromas + iFrame * 24 : NULL,
-                               smoothedChroma, currentChordSalience,
-                               fresh ? inspectSemitones + (iFrame - nCached) * 84 : NULL, gate);
+                               rawChromas + iFrame * 24, smoothedChroma, currentChordSalience,
+                               (const float *) c->semitones.data + iFrame * 84, gate);
 #endif
         report(progress, progressChroma, progressSalience, iFrame + 1, nFrame);
     }
@@ -720,9 +737,6 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     free(bassNorm);
     free(trebleNorm);
     free(noteCountPenalty);
-#ifdef CHORDINO_INSPECT
-    free(inspectSemitones);
-#endif
 
     report(progress, progressSalience, 1, 1, 1);
 

@@ -31,8 +31,6 @@ void chordino_inspect_begin(int nChord, char *const *chordNames);
 //  semitones:      84 semitone activations, A0 upwards
 //  gate:           confidence gate outcome: 0 passed, 1 the best chord did not
 //                  beat N by enough, 2 a chord on another root came too close
-// chroma and semitones are null for the frames an earlier call already ran NNLS
-// on (see rawChromas in chordino.c): they are only worked out once.
 void chordino_inspect_frame(double seconds,
                             const float *chroma,
                             const double *smoothedChroma,
