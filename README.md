@@ -238,6 +238,7 @@ npm test
 | `src/spectrum.c`, `src/spectrum.h` | `spectrum_t`: the spectra Chordino takes, windowed, through KISS FFT |
 | `src/window.c`, `src/window.h` | `window_t`: the Hann window, as Vamp's `Window` |
 | `src/realtime.c`, `src/realtime.h` | `realtime_t`: times in seconds and nanoseconds, as Vamp's `RealTime` |
+| `src/vector.c`, `src/vector.h` | `vector_t`: a growing array |
 | `src/kissfft/` | KISS FFT 131.2.0 |
 | `src/inspect.c`, `src/inspect.js` | The extra functions of the inspect build |
 | `src/js/` | The workers and the worklet, in TypeScript |

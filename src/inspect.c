@@ -6,67 +6,50 @@
 
 #include "nnls-chroma/chordino_inspect.h"
 #include "session.h"
+#include "vector.h"
 
 #include <emscripten/emscripten.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
-// Makes room for count elements of size bytes at *array, which has room for *capacity
-static void reserve(void **array, int *capacity, int count, size_t size) {
-    if (count <= *capacity) return;
-    int grown = *capacity > 0 ? *capacity : 256;
-    while (grown < count) grown *= 2;
-    *array = realloc(*array, grown * size);
-    *capacity = grown;
+// Adds count doubles to a vector of floats
+static void pushDoubles(vector_t *floats, const double *values, int count) {
+    float *added = vector_push(floats, NULL, count);
+    for (int i = 0; i < count; i++) added[i] = values[i];
 }
 
-// A growing array of floats
-typedef struct {
-    float *values;
-    int count;
-    int capacity;
-} floats_t;
-
-static void floats_add(floats_t *floats, const float *values, int count) {
-    reserve((void **) &floats->values, &floats->capacity, floats->count + count, sizeof(float));
-    memcpy(floats->values + floats->count, values, count * sizeof(float));
-    floats->count += count;
-}
-
-static void floats_add_doubles(floats_t *floats, const double *values, int count) {
-    reserve((void **) &floats->values, &floats->capacity, floats->count + count, sizeof(float));
-    for (int i = 0; i < count; i++) floats->values[floats->count + i] = values[i];
-    floats->count += count;
-}
-
-// Filled by the hooks during a single chordino_decode() call; matrices are
-// row-major, one row per frame.
+// Filled by the hooks during a single chordino_decode() call: floats, but for
+// the uint8_t gate; matrices are row-major, one row per frame.
 static struct {
     int nChord;
     char *const *chordNames;
-    floats_t times;
-    floats_t chroma;
-    floats_t smoothedChroma;
-    floats_t salience;
-    floats_t semitones;
-    uint8_t *gate;
-    int gateCount;
-    int gateCapacity;
+    vector_t times;
+    vector_t chroma;
+    vector_t smoothedChroma;
+    vector_t salience;
+    vector_t semitones;
+    vector_t gate;
     bool anyFrame;
     double firstFrame;
-} collected;
+} collected = {
+    .times = {.size = sizeof(float)},
+    .chroma = {.size = sizeof(float)},
+    .smoothedChroma = {.size = sizeof(float)},
+    .salience = {.size = sizeof(float)},
+    .semitones = {.size = sizeof(float)},
+    .gate = {.size = sizeof(uint8_t)},
+};
 
 static void forgetCollected(void) {
     collected.nChord = 0;
     collected.chordNames = NULL;
-    collected.times.count = 0;
-    collected.chroma.count = 0;
-    collected.smoothedChroma.count = 0;
-    collected.salience.count = 0;
-    collected.semitones.count = 0;
-    collected.gateCount = 0;
+    vector_clear(&collected.times);
+    vector_clear(&collected.chroma);
+    vector_clear(&collected.smoothedChroma);
+    vector_clear(&collected.salience);
+    vector_clear(&collected.semitones);
+    vector_clear(&collected.gate);
     collected.anyFrame = false;
     collected.firstFrame = 0;
 }
@@ -81,33 +64,37 @@ typedef struct {
     float semitones[84];
 } remembered_t;
 
-static remembered_t *remembered;
-static int nRemembered;
-static int rememberedCapacity;
+static vector_t remembered = {.size = sizeof(remembered_t)};
 static const float noChroma[24];
 static const float noSemitones[84];
 
 // The first entry not before time
 static int rememberedFrom(double time) {
-    int low = 0, high = nRemembered;
+    const remembered_t *entries = remembered.data;
+    int low = 0, high = remembered.count;
     while (low < high) {
         int middle = (low + high) / 2;
-        if (remembered[middle].time < time) low = middle + 1;
+        if (entries[middle].time < time) low = middle + 1;
         else high = middle;
     }
     return low;
 }
 
-static void remember(double time, const float *chroma, const float *semitones) {
+// The entry for time, or null
+static remembered_t *rememberedAt(double time) {
     int at = rememberedFrom(time);
-    if (at == nRemembered || remembered[at].time != time) {
-        reserve((void **) &remembered, &rememberedCapacity, nRemembered + 1, sizeof(remembered_t));
-        memmove(remembered + at + 1, remembered + at, (nRemembered - at) * sizeof(remembered_t));
-        nRemembered++;
-        remembered[at].time = time;
+    remembered_t *entry = (remembered_t *) remembered.data + at;
+    return at < remembered.count && entry->time == time ? entry : NULL;
+}
+
+static void remember(double time, const float *chroma, const float *semitones) {
+    remembered_t *entry = rememberedAt(time);
+    if (!entry) {
+        entry = vector_insert(&remembered, rememberedFrom(time), NULL, 1);
+        entry->time = time;
     }
-    memcpy(remembered[at].chroma, chroma, sizeof(remembered[at].chroma));
-    memcpy(remembered[at].semitones, semitones, sizeof(remembered[at].semitones));
+    memcpy(entry->chroma, chroma, sizeof(entry->chroma));
+    memcpy(entry->semitones, semitones, sizeof(entry->semitones));
 }
 
 // Set while getPartialAnalysis runs: frames up to this time are not collected.
@@ -138,20 +125,18 @@ void chordino_inspect_frame(double time,
         return;
     }
     if (!chroma) {
-        int at = rememberedFrom(time);
-        bool kept = at < nRemembered && remembered[at].time == time;
+        const remembered_t *kept = rememberedAt(time);
         // Decoded before getPartialAnalysis was first called: nothing was kept
-        chroma = kept ? remembered[at].chroma : noChroma;
-        semitones = kept ? remembered[at].semitones : noSemitones;
+        chroma = kept ? kept->chroma : noChroma;
+        semitones = kept ? kept->semitones : noSemitones;
     }
     float frameTime = time;
-    floats_add(&collected.times, &frameTime, 1);
-    floats_add(&collected.chroma, chroma, 24);
-    floats_add_doubles(&collected.smoothedChroma, smoothedChroma, 24);
-    floats_add_doubles(&collected.salience, salience, collected.nChord);
-    floats_add(&collected.semitones, semitones, 84);
-    reserve((void **) &collected.gate, &collected.gateCapacity, collected.gateCount + 1, sizeof(uint8_t));
-    collected.gate[collected.gateCount++] = gate;
+    vector_push(&collected.times, &frameTime, 1);
+    vector_push(&collected.chroma, chroma, 24);
+    pushDoubles(&collected.smoothedChroma, smoothedChroma, 24);
+    pushDoubles(&collected.salience, salience, collected.nChord);
+    vector_push(&collected.semitones, semitones, 84);
+    vector_push(&collected.gate, &(uint8_t) {gate}, 1);
 }
 
 EM_JS_DEPS(inspect, "$UTF8ToString");
@@ -197,9 +182,9 @@ static void analysisResult(const chordino_result_t *decoded) {
     for (int i = 0; i < decoded->chordCount; ++i) {
         addAnalysisChord(decoded->chords[i].label, realtime_to_seconds(decoded->chords[i].time));
     }
-    addAnalysisBins(collected.times.count, collected.times.values, collected.chroma.values,
-                    collected.smoothedChroma.values, collected.nChord, collected.chordNames,
-                    collected.salience.values, collected.semitones.values, collected.gate);
+    addAnalysisBins(collected.times.count, collected.times.data, collected.chroma.data,
+                    collected.smoothedChroma.data, collected.nChord, collected.chordNames,
+                    collected.salience.data, collected.semitones.data, collected.gate.data);
     forgetCollected();
 }
 
@@ -223,9 +208,7 @@ void getPartialAnalysis(session_t *session, double afterSeconds) {
     partial = false;
     // Frames before the first one decoded have been forgotten for good
     if (collected.anyFrame) {
-        int keep = rememberedFrom(collected.firstFrame);
-        nRemembered -= keep;
-        memmove(remembered, remembered + keep, nRemembered * sizeof(remembered_t));
+        vector_erase(&remembered, 0, rememberedFrom(collected.firstFrame));
     }
     analysisResult(decoded);
 }

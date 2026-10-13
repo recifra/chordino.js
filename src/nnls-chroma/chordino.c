@@ -27,6 +27,7 @@
 // floats), so that every value comes out as it did.
 
 #include "../chordino.h"
+#include "../vector.h"
 
 #include "chordino_inspect.h"
 #include "chromamethods.h"
@@ -100,19 +101,17 @@ struct chordino {
     float inputSampleRate;
     size_t blockSize;
     int frameCount;             // frames since the start or the last reset, for the tuning
-    // The frames kept (see chordino_forget_before): their times and their
-    // log-frequency spectra, nNote bins a third of a semitone apart each
-    int nFrame;
-    int frameCapacity;
-    realtime_t *frameTimes;
-    float *logSpectrum;
-    // Raw stacked (bass, treble) chroma, 24 bins, of the first nRawChroma
+    // The frames kept (see chordino_forget_before): their times (realtime_t)
+    // and their log-frequency spectra, nNote bins a third of a semitone apart
+    // each (one element of nNote floats per frame)
+    vector_t frameTimes;
+    vector_t logSpectrum;
+    // Raw stacked (bass, treble) chroma, 24 floats per element, of the first
     // frames, kept between chordino_decode calls so a caller decoding again and
     // again pays the NNLS of each frame once; those frames keep the tuning
     // estimated when they were first decoded. Chord matching runs on a smoothed
     // copy.
-    int nRawChroma;
-    float *rawChromas;
+    vector_t rawChromas;
     float meanTunings[nBPS];
     float sinvalues[nBPS];
     float cosvalues[nBPS];
@@ -125,30 +124,27 @@ struct chordino {
     float *dict;                // the note dictionary, nNote bins for each of 84 semitones
     float hw[hamwinlength];
     chord_dictionary_t *dictionary;
-    // What the last chordino_decode returned
-    int chordCapacity;
-    chordino_chord_t *chords;
-    int noteCapacity;
-    chordino_note_t *notes;
-    int outputCapacity;
-    realtime_t *times;
-    float *harmonicChange;
-    float *logLikelihood;
+    // What the last chordino_decode returned: chordino_chord_t,
+    // chordino_note_t, and per frame realtime_t, float and float
+    vector_t chords;
+    vector_t notes;
+    vector_t times;
+    vector_t harmonicChange;
+    vector_t logLikelihood;
     chordino_result_t result;
 };
-
-// Makes room for count elements of size bytes at *array, which has room for *capacity
-static void reserve(void **array, int *capacity, int count, size_t size) {
-    if (count <= *capacity) return;
-    int grown = *capacity > 0 ? *capacity : 64;
-    while (grown < count) grown *= 2;
-    *array = realloc(*array, grown * size);
-    *capacity = grown;
-}
 
 chordino_t *chordino_create(float sampleRate) {
     chordino_t *c = calloc(1, sizeof(chordino_t));
     c->inputSampleRate = sampleRate;
+    c->frameTimes = vector_create(sizeof(realtime_t));
+    c->logSpectrum = vector_create(nNote * sizeof(float));
+    c->rawChromas = vector_create(24 * sizeof(float));
+    c->chords = vector_create(sizeof(chordino_chord_t));
+    c->notes = vector_create(sizeof(chordino_note_t));
+    c->times = vector_create(sizeof(realtime_t));
+    c->harmonicChange = vector_create(sizeof(float));
+    c->logLikelihood = vector_create(sizeof(float));
     // make the *note* dictionary matrix
     c->dict = calloc(nNote * 84, sizeof(float));
 
@@ -214,37 +210,35 @@ void chordino_destroy(chordino_t *c) {
     free(c->kernelValue);
     free(c->kernelFftIndex);
     free(c->kernelNoteIndex);
-    free(c->frameTimes);
-    free(c->logSpectrum);
-    free(c->rawChromas);
-    free(c->chords);
-    free(c->notes);
-    free(c->times);
-    free(c->harmonicChange);
-    free(c->logLikelihood);
+    vector_destroy(&c->frameTimes);
+    vector_destroy(&c->logSpectrum);
+    vector_destroy(&c->rawChromas);
+    vector_destroy(&c->chords);
+    vector_destroy(&c->notes);
+    vector_destroy(&c->times);
+    vector_destroy(&c->harmonicChange);
+    vector_destroy(&c->logLikelihood);
     free(c);
 }
 
 void chordino_reset(chordino_t *c) {
     // Clear buffers, reset stored values, etc
     c->frameCount = 0;
-    c->nFrame = 0;
+    vector_clear(&c->frameTimes);
+    vector_clear(&c->logSpectrum);
     for (int iBPS = 0; iBPS < nBPS; ++iBPS) {
         c->meanTunings[iBPS] = 0;
     }
-    c->nRawChroma = 0;
+    vector_clear(&c->rawChromas);
 }
 
 void chordino_forget_before(chordino_t *c, realtime_t start) {
+    const realtime_t *frameTimes = c->frameTimes.data;
     int drop = 0;
-    while (drop < c->nFrame && realtime_compare(c->frameTimes[drop], start) < 0) drop++;
-    if (drop == 0) return;
-    c->nFrame -= drop;
-    memmove(c->frameTimes, c->frameTimes + drop, c->nFrame * sizeof(realtime_t));
-    memmove(c->logSpectrum, c->logSpectrum + drop * nNote, c->nFrame * nNote * sizeof(float));
-    int dropChroma = drop < c->nRawChroma ? drop : c->nRawChroma;
-    c->nRawChroma -= dropChroma;
-    memmove(c->rawChromas, c->rawChromas + dropChroma * 24, c->nRawChroma * 24 * sizeof(float));
+    while (drop < c->frameTimes.count && realtime_compare(frameTimes[drop], start) < 0) drop++;
+    vector_erase(&c->frameTimes, 0, drop);
+    vector_erase(&c->logSpectrum, 0, drop);
+    vector_erase(&c->rawChromas, 0, drop < c->rawChromas.count ? drop : c->rawChromas.count);
 }
 
 void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
@@ -284,16 +278,8 @@ void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
     }
 
     // remember note magnitude
-    if (c->nFrame == c->frameCapacity) {
-        int capacity = c->frameCapacity;
-        reserve((void **) &c->frameTimes, &capacity, c->nFrame + 1, sizeof(realtime_t));
-        c->logSpectrum = realloc(c->logSpectrum, capacity * nNote * sizeof(float));
-        c->rawChromas = realloc(c->rawChromas, capacity * 24 * sizeof(float));
-        c->frameCapacity = capacity;
-    }
-    c->frameTimes[c->nFrame] = timestamp;
-    memcpy(c->logSpectrum + c->nFrame * nNote, nm, nNote * sizeof(float));
-    c->nFrame++;
+    vector_push(&c->frameTimes, &timestamp, 1);
+    vector_push(&c->logSpectrum, nm, 1);
 }
 
 // Reports frame of nFrame through a stage spanning from-to on the 0-1 scale
@@ -303,10 +289,10 @@ static void report(void (*progress)(double done), double from, double to, int fr
 
 const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double done)) {
     memset(&c->result, 0, sizeof(c->result));
-    if (c->nFrame == 0) return &c->result;
+    int nFrame = c->frameTimes.count;
+    if (nFrame == 0) return &c->result;
     int nChord = c->dictionary->size;
     const float *chorddict = c->dictionary->templates;
-    int nFrame = c->nFrame;
 
     // L2 norm per candidate template. Raw dot-product scoring favours templates with
     // more populated bins (7th/9th/11th/13th chords, add-tone chords, bass/slash
@@ -390,20 +376,17 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     **/
     // Frames an earlier call already worked the chroma out for (see rawChromas):
     // only the ones after them go through tuning and NNLS below.
-    int nCached = c->nRawChroma;
+    int nCached = c->rawChromas.count;
     int nFresh = nFrame - nCached;
     int count = nCached;
     float *tunedSpec = malloc((nFresh > 0 ? nFresh : 1) * nNote * sizeof(float));
 
-    reserve((void **) &c->times, &c->outputCapacity, nFrame, sizeof(realtime_t));
-    c->harmonicChange = realloc(c->harmonicChange, c->outputCapacity * sizeof(float));
-    c->logLikelihood = realloc(c->logLikelihood, c->outputCapacity * sizeof(float));
-    realtime_t *timestamps = c->times;
-    memcpy(timestamps, c->frameTimes, nFrame * sizeof(realtime_t));
+    realtime_t *timestamps = vector_resize(&c->times, nFrame);
+    memcpy(timestamps, c->frameTimes.data, nFrame * sizeof(realtime_t));
 
     report(progress, 0, progressTuning, count, nFrame);
     for (int iFresh = 0; iFresh < nFresh; ++iFresh) {
-        const float *currentLogSpectrum = c->logSpectrum + (nCached + iFresh) * nNote;
+        const float *currentLogSpectrum = (const float *) c->logSpectrum.data + (nCached + iFresh) * nNote;
         float *currentTunedSpec = tunedSpec + iFresh * nNote; // tuned log-frequency spectrum
         currentTunedSpec[0] = 0.0; currentTunedSpec[1] = 0.0; // set lower edge to zero
 
@@ -444,7 +427,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         bass and treble stacked onto each other).
     **/
     double *chordogram = malloc(nFrame * nChord * sizeof(double)); // nFrame rows of nChord saliences
-    float *chordchange = c->harmonicChange;
+    float *chordchange = vector_resize(&c->harmonicChange, nFrame);
     for (int iFrame = 0; iFrame < nFrame; iFrame++) chordchange[iFrame] = 0;
     count = nCached;
 
@@ -469,9 +452,8 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 
         // here's where the non-negative least squares algorithm calculates the note activation x
 
-        // the bass chroma (0-11) stacked under the treble one (12-23)
-        float *chroma = c->rawChromas + c->nRawChroma * 24;
-        for (int i = 0; i < 24; i++) chroma[i] = 0;
+        // the bass chroma (0-11) stacked under the treble one (12-23), zeros to start
+        float *chroma = vector_push(&c->rawChromas, NULL, 1);
 
         if (some_b_greater_zero) {
             float x[84+1000];
@@ -508,7 +490,6 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 #endif
             }
         }
-        c->nRawChroma++;
 
         count++;
         report(progress, progressTuning, progressChroma, count, nFrame);
@@ -524,22 +505,23 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     // directions lag by the same amount the opposite way, so their average is
     // centred on the frame. Everything is buffered until here anyway, so the
     // future frames are available.
+    const float *rawChromas = c->rawChromas.data;
     double *smoothedChromas = malloc(nFrame * 24 * sizeof(double));
     double runningChroma[24] = {0};
     for (int iFrame = 0; iFrame < nFrame; iFrame++) {
         // Bins 0-11 are the bass chroma, 12-23 the treble one (stacked above).
         for (int i = 0; i < 24; i++) {
             double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
-            runningChroma[i] = iFrame == 0 ? c->rawChromas[iFrame * 24 + i]
-                : alpha * c->rawChromas[iFrame * 24 + i] + (1 - alpha) * runningChroma[i];
+            runningChroma[i] = iFrame == 0 ? rawChromas[iFrame * 24 + i]
+                : alpha * rawChromas[iFrame * 24 + i] + (1 - alpha) * runningChroma[i];
             smoothedChromas[iFrame * 24 + i] = runningChroma[i] / 2;
         }
     }
     for (int iFrame = nFrame - 1; iFrame >= 0; iFrame--) {
         for (int i = 0; i < 24; i++) {
             double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
-            runningChroma[i] = iFrame == nFrame - 1 ? c->rawChromas[iFrame * 24 + i]
-                : alpha * c->rawChromas[iFrame * 24 + i] + (1 - alpha) * runningChroma[i];
+            runningChroma[i] = iFrame == nFrame - 1 ? rawChromas[iFrame * 24 + i]
+                : alpha * rawChromas[iFrame * 24 + i] + (1 - alpha) * runningChroma[i];
             smoothedChromas[iFrame * 24 + i] += runningChroma[i] / 2;
         }
     }
@@ -645,7 +627,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         // Only frames this call ran NNLS on have their chroma and semitones here
         bool fresh = iFrame >= nCached;
         chordino_inspect_frame(realtime_to_seconds(timestamps[iFrame]),
-                               fresh ? c->rawChromas + iFrame * 24 : NULL,
+                               fresh ? rawChromas + iFrame * 24 : NULL,
                                smoothedChroma, currentChordSalience,
                                fresh ? inspectSemitones + (iFrame - nCached) * 84 : NULL, gate);
 #endif
@@ -677,10 +659,9 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     int *chordpath = malloc(nFrame * sizeof(int));
     viterbi_path(nChord, nFrame, init, trans, chordogram, delta, scale, chordpath);
 
-    int nChords = 0;
-    int nNotes = 0;
-    reserve((void **) &c->chords, &c->chordCapacity, 2, sizeof(chordino_chord_t));
-    c->chords[nChords++] = (chordino_chord_t) {c->dictionary->names[chordpath[0]], timestamps[0]};
+    vector_clear(&c->chords);
+    vector_clear(&c->notes);
+    vector_push(&c->chords, &(chordino_chord_t) {c->dictionary->names[chordpath[0]], timestamps[0]}, 1);
     // With the uniform prior the path no longer always starts on N, so track the first
     // chord as already emitted; otherwise it is reported again at the second frame.
     int oldchord = chordpath[0];
@@ -693,15 +674,13 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     for (int iFrame = 1; iFrame < nFrame; ++iFrame) {
         if (chordpath[iFrame] != oldchord ) {
             // chord
-            reserve((void **) &c->chords, &c->chordCapacity, nChords + 2, sizeof(chordino_chord_t));
-            c->chords[nChords++] = (chordino_chord_t) {c->dictionary->names[chordpath[iFrame]], timestamps[iFrame]};
+            vector_push(&c->chords, &(chordino_chord_t) {c->dictionary->names[chordpath[iFrame]], timestamps[iFrame]}, 1);
             oldchord = chordpath[iFrame];
             // chord notes
-            reserve((void **) &c->notes, &c->noteCapacity, nNotes + nOldnotes, sizeof(chordino_note_t));
             for (int iNote = 0; iNote < nOldnotes; ++iNote) { // finish duration of old chord
                 oldnotes[iNote].duration = realtime_add(oldnotes[iNote].duration, timestamps[iFrame]);
-                c->notes[nNotes++] = oldnotes[iNote];
             }
+            vector_push(&c->notes, oldnotes, nOldnotes);
             nOldnotes = 0;
             for (int iNote = d->noteStart[chordpath[iFrame]]; iNote < d->noteStart[chordpath[iFrame] + 1]; ++iNote) { // prepare notes of current chord
                 oldnotes[nOldnotes++] = (chordino_note_t) {d->notes[iNote], timestamps[iFrame], realtime_negate(timestamps[iFrame])};
@@ -717,17 +696,17 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         }
     }
 
+    float *logLikelihood = vector_resize(&c->logLikelihood, nFrame);
     for (int iFrame = 0; iFrame < nFrame; ++iFrame) {
-        c->logLikelihood[iFrame] = -log(scale[iFrame]);
+        logLikelihood[iFrame] = -log(scale[iFrame]);
     }
 
-    c->chords[nChords++] = (chordino_chord_t) {"N", timestamps[nFrame-1]};
+    vector_push(&c->chords, &(chordino_chord_t) {"N", timestamps[nFrame-1]}, 1);
 
-    reserve((void **) &c->notes, &c->noteCapacity, nNotes + nOldnotes, sizeof(chordino_note_t));
     for (int iNote = 0; iNote < nOldnotes; ++iNote) { // finish duration of old chord
         oldnotes[iNote].duration = realtime_add(oldnotes[iNote].duration, timestamps[nFrame-1]);
-        c->notes[nNotes++] = oldnotes[iNote];
     }
+    vector_push(&c->notes, oldnotes, nOldnotes);
 
     free(delta);
     free(trans);
@@ -747,13 +726,13 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 
     report(progress, progressSalience, 1, 1, 1);
 
-    c->result.chordCount = nChords;
-    c->result.chords = c->chords;
-    c->result.noteCount = nNotes;
-    c->result.notes = c->notes;
+    c->result.chordCount = c->chords.count;
+    c->result.chords = c->chords.data;
+    c->result.noteCount = c->notes.count;
+    c->result.notes = c->notes.data;
     c->result.frameCount = nFrame;
-    c->result.times = c->times;
-    c->result.harmonicChange = c->harmonicChange;
-    c->result.logLikelihood = c->logLikelihood;
+    c->result.times = c->times.data;
+    c->result.harmonicChange = c->harmonicChange.data;
+    c->result.logLikelihood = c->logLikelihood.data;
     return &c->result;
 }
