@@ -14,11 +14,10 @@ npm run build
 
 `npm run build` runs both halves, which can also run on their own:
 
-- `npm run build:wasm` compiles the C++ with `emcc`; the commands and flags are
-  in `src/build.sh`. The production module is all C, so no libc++ comes in
-  (its streams alone were once more than half of the wasm); only the inspect
-  build has C++, in `src/inspect.cpp`. Anything new that formats text should
-  do it without `printf`, or the size comes back. The Vamp SDK is no longer
+- `npm run build:wasm` compiles the C with `emcc`; the commands and flags are
+  in `src/build.sh`. It is all C, so no libc++ comes in (its streams alone
+  were once more than half of the wasm). Anything new that formats text in the
+  production module should do it without `printf`, or the size comes back. The Vamp SDK is no longer
   needed: Chordino, a Vamp plugin upstream, is the `chordino_t` of
   `src/chordino.h`, with no descriptors or parameters (they are constants in
   `src/nnls-chroma/Chordino.c`); `src/session.c` and `src/spectrum.c` do
@@ -88,8 +87,9 @@ The player in `examples/player` visualizes the per-frame bins Chordino computes
 `examples/realtime` does the same live from the microphone, next to the chords
 the production worker posts. They use their own bundle so the production one
 keeps its size and API: `-DCHORDINO_INSPECT` turns on the hooks in
-`src/nnls-chroma/ChordinoInspect.h` and `src/inspect.cpp` adds `getAnalysis`,
-and `getPartialAnalysis` for reading while still feeding audio.
+`src/nnls-chroma/ChordinoInspect.h` and `src/inspect.c` adds `getAnalysis`,
+and `getPartialAnalysis` for reading while still feeding audio, which
+`src/inspect.js` wraps.
 
 ## Examples
 `examples/lib` and `examples/player/chordino-inspect.js` are symlinks into

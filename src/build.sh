@@ -37,15 +37,15 @@ emcc -O3 --closure 1 -flto $FLAGS \
 chmod 644 "$OUT/chordino.wasm"
 
 # Separate single-file bundle with the CHORDINO_INSPECT hooks and getAnalysis,
-# so the production module keeps its size and API. inspect.cpp still binds
-# getAnalysis with embind.
-emcc --bind -O3 $FLAGS \
+# so the production module keeps its size and API
+emcc -O3 $FLAGS \
     -DCHORDINO_INSPECT \
     --post-js chordextract.js \
+    --post-js inspect.js \
     -s WASM=1 \
     -s ALLOW_MEMORY_GROWTH \
     -s WASM_ASYNC_COMPILATION=0 \
     -s "EXPORTED_FUNCTIONS=['_malloc','_free']" \
     -s SINGLE_FILE=1 \
     -o "$OUT/inspect/chordino-inspect.js" \
-    $SOURCES inspect.cpp
+    $SOURCES inspect.c

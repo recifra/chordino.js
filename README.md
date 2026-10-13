@@ -239,7 +239,7 @@ npm test
 | `src/window.c`, `src/window.h` | `window_t`: the Hann window, as Vamp's `Window` |
 | `src/realtime.c`, `src/realtime.h` | `realtime_t`: times in seconds and nanoseconds, as Vamp's `RealTime` |
 | `src/kissfft/` | KISS FFT 131.2.0 |
-| `src/inspect.cpp` | Extra bindings of the inspect build |
+| `src/inspect.c`, `src/inspect.js` | The extra functions of the inspect build |
 | `src/js/` | The workers and the worklet, in TypeScript |
 | `src/build.sh` | The `emcc` commands |
 | `examples/` | The example pages |

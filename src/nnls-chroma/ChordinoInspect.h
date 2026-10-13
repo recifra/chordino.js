@@ -7,7 +7,7 @@
   Only compiled when CHORDINO_INSPECT is defined, which the separate
   chordino-inspect.js build does (see BUILD.md). Without it Chordino.c
   compiles to exactly what ships in chordino.js. The hooks are free functions so
-  src/chordino.h keeps its API; src/inspect.cpp implements them.
+  src/chordino.h keeps its API; src/inspect.c implements them.
 */
 
 #ifndef _CHORDINO_INSPECT_
