@@ -26,8 +26,8 @@ describe('realtime processor', () => {
   });
 
   /** A processor as an AudioWorkletNode would create it, once its wasm is up. */
-  async function createProcessor() {
-    const processor = new ChordProcessor({ processorOptions: { wasmBinary } });
+  async function createProcessor(options = {}) {
+    const processor = new ChordProcessor({ processorOptions: { wasmBinary, ...options } });
     await processor.ready;
     assert.deepEqual(processor.port.messages, [{ type: 'ready' }]);
     processor.port.messages.length = 0;
@@ -59,6 +59,27 @@ describe('realtime processor', () => {
     stream(processor, clock, concat(...voicings.map((notes) => synthChord(notes, 2, SAMPLE_RATE))), SAMPLE_RATE);
 
     assert.deepEqual(detected(processor), ['C', 'Am', 'F', 'G']);
+  });
+
+  test('posts a chord delayMs after its audio, with the time it started', async () => {
+    // Frames come out about 0.4 s after their audio, on top of delayMs. With no
+    // delay the newest frames also have to settle before the change shows.
+    const samples = concat(synthChord(['A2', 'A3', 'C4', 'E4'], 2, SAMPLE_RATE), synthChord(['F2', 'A3', 'C4', 'F4'], 3, SAMPLE_RATE));
+    const posted = {};
+    for (const delayMs of [0, 1000]) {
+      const processor = await createProcessor({ delayMs });
+      const start = clock.currentTime;
+      processor.port.postMessage = (data) => {
+        if (data.type === 'chordResult' && data.result.chord === 'F') {
+          posted[delayMs] = clock.currentTime - start;
+          assert.ok(Math.abs(data.result.time - start - 2) < 0.15, `F starts at ${data.result.time - start}`);
+        }
+      };
+      stream(processor, clock, samples, SAMPLE_RATE);
+    }
+
+    assert.ok(posted[0] - 2 < 0.8, `F posted ${posted[0] - 2}s after it started with delayMs 0`);
+    assert.ok(Math.abs(posted[1000] - 2 - 1.4) < 0.15, `F posted ${posted[1000] - 2}s after it started with delayMs 1000`);
   });
 
   test('stays quiet on silence', async () => {
