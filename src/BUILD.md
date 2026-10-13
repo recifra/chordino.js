@@ -24,6 +24,9 @@ Everything lands in `build/`:
   frames so far and leaves the buffered samples alone; each frame's chroma is
   worked out once and kept, and `forgetBefore(instance, milliseconds)` drops
   the frames before that time so every read decodes a bounded window.
+  `initializePlugin(sampleRate, blockSize, true)` gets each frame out as soon
+  as its audio is in, half a block (186 ms at 44.1 kHz) sooner, at the cost of
+  the first few frames, so the chords start that much after 0.
 - `chord-worker.mjs` (from `src/js/`): module worker that detects the chords of
   a whole recording, posting its progress and then `{"timestamps": [[chord,
   seconds], ..., ["", end]]}`. `examples/extract/index.html` drives it,

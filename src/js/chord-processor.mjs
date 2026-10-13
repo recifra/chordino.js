@@ -8,8 +8,8 @@
 //
 // It posts { type: 'ready' } once the wasm is up (audio before that is skipped),
 // { type: 'chordResult', result: { chord, time } } on every chord change (time
-// is when the chord started, on the AudioContext clock; it is posted at least
-// delayMs plus 0.4 s later),
+// is when the chord started, on the AudioContext clock; it is posted delayMs
+// plus about 0.2 s later),
 // { type: 'error', message } when the wasm cannot load, and { type: 'stopped' }
 // after it is sent { type: 'stop' }.
 //
@@ -77,7 +77,8 @@ class ChordProcessor extends AudioWorkletProcessor {
         }
         this.module = module;
         this.pBuffer = module._malloc(this.bufferSize * Float32Array.BYTES_PER_ELEMENT);
-        this.instance = module.initializePlugin(sampleRate, this.bufferSize);
+        // realtime: each frame comes out as soon as its own audio is in
+        this.instance = module.initializePlugin(sampleRate, this.bufferSize, true);
         this.port.postMessage({ type: 'ready' });
       },
       (err) => {
@@ -138,7 +139,7 @@ class ChordProcessor extends AudioWorkletProcessor {
         this.module.processBuffer(this.instance, this.pBuffer, Math.trunc(this.bufferStartMs));
 
         // Nothing to read once the input has been quiet for longer than the point
-        // read lags behind it (frames come out about 0.4 s after their audio).
+        // read lags behind it (frames come out about 0.2 s after their audio).
         if (this.loudUntilMs > currentTimeMs - this.delayMs - 1000) {
           // Read back the results, re-decoding the last windowMs each call. Not
           // getResult: that one is for the end of the audio, and pads what is

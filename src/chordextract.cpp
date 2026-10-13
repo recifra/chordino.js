@@ -47,13 +47,23 @@ void setProgressCallback(emscripten::val callback) {
     chordinoProgress = enabled ? &forwardProgress : nullptr;
 }
 
-uintptr_t initializePlugin(
+// The input-domain adapter centres every frame on its timestamp. ShiftData does
+// that by delaying the audio half a block, so the first frame is centred on 0 and
+// the chords start at 0, as the offline extraction reports them; but then a frame
+// only comes out half a block (186 ms at 44.1 kHz) after the end of its window.
+// With realtime set, ShiftTimestamp analyses each block as it comes and moves its
+// timestamp to its centre instead: the same frames minus the first few, each out
+// half a block sooner, which is what the realtime worklet wants.
+uintptr_t initializeSession(
     float samplerate,
-    size_t blocksize
+    size_t blocksize,
+    bool realtime
 ) {
     auto *chordino = new Chordino(samplerate);
     auto *ia = new PluginInputDomainAdapter(chordino);
-    ia->setProcessTimestampMethod(PluginInputDomainAdapter::ShiftData);
+    ia->setProcessTimestampMethod(realtime
+        ? PluginInputDomainAdapter::ShiftTimestamp
+        : PluginInputDomainAdapter::ShiftData);
     auto *adapter = new PluginBufferingAdapter(ia);
 
     // Plugin requires 1 channel (we will mix after)
@@ -62,6 +72,13 @@ uintptr_t initializePlugin(
         return 0;
     }
     return (uintptr_t) new Session{chordino, adapter};
+}
+
+uintptr_t initializePlugin(
+    float samplerate,
+    size_t blocksize
+) {
+    return initializeSession(samplerate, blocksize, false);
 }
 
 void releasePlugin(uintptr_t lpSession) {
@@ -159,6 +176,8 @@ void forgetBefore(uintptr_t lpSession, long milliseconds) {
 
 EMSCRIPTEN_BINDINGS(chordextract) {
     emscripten::function("initializePlugin", &initializePlugin);
+    // initializePlugin(samplerate, blocksize, realtime), see initializeSession
+    emscripten::function("initializePlugin", &initializeSession);
     emscripten::function("releasePlugin", &releasePlugin);
     emscripten::function("resetProcess", &resetProcess);
     emscripten::function("processBuffer", &processBuffer);

@@ -118,6 +118,26 @@ describe('offline extraction', () => {
     assert.deepEqual(labels(once), labels(detectChords(chordino, samples, sampleRate)));
   });
 
+  test('initializePlugin(..., true) gets the same chords half a block sooner', () => {
+    const { Module } = chordino;
+    const samples = concat(synthChord(voicings.C, 2, SAMPLE_RATE), synthChord(voicings.Am, 2, SAMPLE_RATE));
+    const read = (realtime) => {
+      const instance = Module.initializePlugin(SAMPLE_RATE, 4096, realtime);
+      try {
+        return detectPartial(chordino, samples, SAMPLE_RATE, { instance });
+      } finally {
+        Module.releasePlugin(instance);
+      }
+    };
+    const offline = read(false);
+    const realtime = read(true);
+
+    assert.deepEqual(labels(realtime), labels(offline));
+    // The newest frame, where the closing N sits, is 8192 samples further on
+    const sooner = realtime.at(-1).time - offline.at(-1).time;
+    assert.ok(Math.abs(sooner - 8192 / SAMPLE_RATE) < 0.01, `newest frame ${sooner}s further on`);
+  });
+
   test('forgetBefore leaves getPartialResult the audio after it', () => {
     const { Module } = chordino;
     const instance = Module.initializePlugin(SAMPLE_RATE, 4096);
