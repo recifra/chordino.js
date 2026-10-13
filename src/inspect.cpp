@@ -1,13 +1,15 @@
 // Inspection build only (CHORDINO_INSPECT, see BUILD.md): exposes the per-frame
-// bins Chordino computes while decoding, for the examples/player visualization.
-// It is linked next to chordextract.cpp, which still provides initializePlugin,
-// processBuffer and releasePlugin; this file only adds getAnalysis.
+// bins Chordino computes while decoding, for the examples/player and
+// examples/realtime visualizations. It is linked next to chordextract.cpp, which
+// still provides initializePlugin, processBuffer and releasePlugin; this file
+// only adds getAnalysis and getPartialAnalysis.
 
 #include "vamp-hostsdk/PluginBufferingAdapter.h"
 
 #include "nnls-chroma/ChordinoInspect.h"
 #include "session.h"
 
+#include <map>
 #include <string>
 #include <vector>
 #include <emscripten/bind.h>
@@ -28,9 +30,26 @@ struct Collected {
     vector<float> salience;
     vector<float> semitones;
     vector<uint8_t> gate;
+    bool anyFrame = false;
+    double firstFrame = 0;
 };
 
 Collected collected;
+
+// Chordino hands over a frame's chroma and semitones only the first time it
+// decodes it (see Chordino::m_rawChromas), so while getPartialAnalysis is in use
+// they are kept here, by frame time, for the calls after that.
+struct Remembered {
+    vector<float> chroma;
+    vector<float> semitones;
+};
+map<double, Remembered> remembered;
+const vector<float> noChroma(24, 0.f);
+const vector<float> noSemitones(84, 0.f);
+
+// Set while getPartialAnalysis runs: frames up to this time are not collected.
+bool partial = false;
+double collectAfter = 0;
 
 const char *chromaNames[24] = {
     "A (bass)", "Bb (bass)", "B (bass)", "C (bass)", "C# (bass)", "D (bass)",
@@ -86,35 +105,53 @@ void chordinoInspectBegin(const vector<string> &chordNames) {
 }
 
 void chordinoInspectFrame(double time,
-                          const vector<float> &chroma,
+                          const vector<float> *chroma,
                           const vector<double> &smoothedChroma,
                           const vector<double> &salience,
                           const float *semitones,
                           int gate) {
+    if (!collected.anyFrame) {
+        collected.anyFrame = true;
+        collected.firstFrame = time;
+    }
+    if (chroma && partial) {
+        remembered[time] = Remembered{*chroma, vector<float>(semitones, semitones + 84)};
+    }
+    // As a float, like the times handed to JS, which is where collectAfter comes from
+    if (partial && float(time) <= collectAfter) {
+        return;
+    }
+    if (!chroma) {
+        auto it = remembered.find(time);
+        bool kept = it != remembered.end();
+        // Decoded before getPartialAnalysis was first called: nothing was kept
+        chroma = kept ? &it->second.chroma : &noChroma;
+        semitones = kept ? it->second.semitones.data() : noSemitones.data();
+    }
     collected.times.push_back(time);
-    collected.chroma.insert(collected.chroma.end(), chroma.begin(), chroma.end());
+    collected.chroma.insert(collected.chroma.end(), chroma->begin(), chroma->end());
     collected.smoothedChroma.insert(collected.smoothedChroma.end(), smoothedChroma.begin(), smoothedChroma.end());
     collected.salience.insert(collected.salience.end(), salience.begin(), salience.end());
     collected.semitones.insert(collected.semitones.end(), semitones, semitones + 84);
     collected.gate.push_back(gate);
 }
 
-emscripten::val getAnalysis(uintptr_t lpSession) {
-    auto *adapter = reinterpret_cast<Session*>(lpSession)->adapter;
-    int chordFeatureNo = -1;
-    Plugin::OutputList outputs = adapter->getOutputDescriptors();
+namespace {
+
+int chordOutput(Plugin *plugin) {
+    Plugin::OutputList outputs = plugin->getOutputDescriptors();
     for (int i = 0; i < int(outputs.size()); ++i)
     {
         if (outputs[i].identifier == "simplechord")
         {
-            chordFeatureNo = i;
-            break;
+            return i;
         }
     }
-    collected = Collected();
-    // Chordino does all its work here, calling the hooks once per frame
-    Plugin::FeatureSet fs = adapter->getRemainingFeatures();
+    return -1;
+}
 
+// The chords in fs plus the bins the hooks collected, which it then clears.
+emscripten::val analysisResult(Plugin::FeatureSet &fs, int chordFeatureNo) {
     emscripten::val chords = emscripten::val::array();
     if (chordFeatureNo >= 0)
     {
@@ -141,6 +178,37 @@ emscripten::val getAnalysis(uintptr_t lpSession) {
     return result;
 }
 
+}
+
+emscripten::val getAnalysis(uintptr_t lpSession) {
+    auto *adapter = reinterpret_cast<Session*>(lpSession)->adapter;
+    int chordFeatureNo = chordOutput(adapter);
+    collected = Collected();
+    // Chordino does all its work here, calling the hooks once per frame
+    Plugin::FeatureSet fs = adapter->getRemainingFeatures();
+    return analysisResult(fs, chordFeatureNo);
+}
+
+// Like getAnalysis, for a caller still feeding audio (examples/realtime): it
+// decodes through Chordino directly, as getPartialResult does, and returns the
+// chords of every frame left (see forgetBefore) but the bins of the frames after
+// afterSeconds only, with the values they have now.
+emscripten::val getPartialAnalysis(uintptr_t lpSession, double afterSeconds) {
+    auto *chordino = reinterpret_cast<Session*>(lpSession)->chordino;
+    int chordFeatureNo = chordOutput(chordino);
+    collected = Collected();
+    partial = true;
+    collectAfter = afterSeconds;
+    Plugin::FeatureSet fs = chordino->getRemainingFeatures();
+    partial = false;
+    // Frames before the first one decoded have been forgotten for good
+    if (collected.anyFrame) {
+        remembered.erase(remembered.begin(), remembered.lower_bound(collected.firstFrame));
+    }
+    return analysisResult(fs, chordFeatureNo);
+}
+
 EMSCRIPTEN_BINDINGS(inspect) {
     emscripten::function("getAnalysis", &getAnalysis);
+    emscripten::function("getPartialAnalysis", &getPartialAnalysis);
 }

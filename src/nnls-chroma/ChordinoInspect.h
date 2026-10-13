@@ -1,7 +1,8 @@
 /* -*- c-basic-offset: 4 indent-tabs-mode: nil -*-  vi:set ts=8 sts=4 sw=4: */
 
 /*
-  Inspection hooks for internal visualization (examples/player).
+  Inspection hooks for internal visualization (examples/player and
+  examples/realtime).
 
   Only compiled when CHORDINO_INSPECT is defined, which the separate
   chordino-inspect.js build does (see src/BUILD.md). Without it Chordino.cpp
@@ -29,8 +30,10 @@ void chordinoInspectBegin(const std::vector<std::string> &chordNames);
 //  semitones:      84 semitone activations, A0 upwards
 //  gate:           confidence gate outcome: 0 passed, 1 the best chord did not
 //                  beat N by enough, 2 a chord on another root came too close
+// chroma and semitones are null for the frames an earlier call already ran NNLS
+// on (see Chordino::m_rawChromas): they are only worked out once.
 void chordinoInspectFrame(double seconds,
-                          const std::vector<float> &chroma,
+                          const std::vector<float> *chroma,
                           const std::vector<double> &smoothedChroma,
                           const std::vector<double> &salience,
                           const float *semitones,

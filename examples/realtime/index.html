@@ -1,83 +1,62 @@
-<button id="btn-action">Start Detect</button>
-<script>
-    // Where chord-processor.mjs, chordino.mjs and chordino.wasm live; an app may
-    // serve them from a CDN, which addModule and fetch allow with CORS
-    const LIB = new URL('../lib/', location.href);
-    let stream;
-    let workletNode;
-    let wasmBinary;
-    const btnAction = document.getElementById('btn-action');
-
-    const startAction = async () => {
-        if (workletNode) {
-            return;
-        }
-        try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: false }
-            });
-            const audioContext = new AudioContext();
-            const source = audioContext.createMediaStreamSource(stream);
-
-            // Worklets cannot fetch, so the processor gets the wasm bytes from here
-            wasmBinary ??= await (await fetch(new URL('chordino.wasm', LIB))).arrayBuffer();
-
-            // Load the AudioWorklet module
-            await audioContext.audioWorklet.addModule(new URL('chord-processor.mjs', LIB));
-
-            // Create the AudioWorkletNode
-            workletNode = new AudioWorkletNode(audioContext, 'chord-processor', {
-                channelCount: 1,
-                channelCountMode: "explicit",
-                channelInterpretation: "discrete",
-                processorOptions: { wasmBinary }
-            });
-
-            // Handle messages from the worklet
-            workletNode.port.onmessage = (event) => {
-                if (event.data.type === 'chordResult') {
-                    console.log('Chords:', event.data.result);
-                }
-                if (event.data.type === 'ready') {
-                    console.log('Listening to microphone...');
-                }
-                if (event.data.type === 'error') {
-                    console.error('Could not load chordino.wasm:', event.data.message);
-                }
-                if (event.data.type === 'stopped') {
-                    console.log('Stopped detecting');
-                }
-            };
-
-            source.connect(workletNode);
-            workletNode.connect(audioContext.destination);
-        } catch (err) {
-            console.error('Error accessing microphone:', err);
-        }
-    };
-
-    const stopAction = async () => {
-        if (!workletNode) {
-            return;
-        }
-        const _workletNode = workletNode;
-        workletNode = undefined;
-        stream.getAudioTracks().forEach((track) => {
-            track.stop();
-        });
-        _workletNode.port.postMessage({ type: 'stop' });
-        _workletNode.disconnect();
-    };
-
-    const onAction = () => {
-        if (workletNode) {
-            btnAction.textContent = 'Start Detect'
-            stopAction();
-            return;
-        }
-        btnAction.textContent = 'Stop Detect';
-        startAction();
-    }
-
-    btnAction.addEventListener('click', onAction);
-</script>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chordino Realtime</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../player/style.css">
+<style>
+  #posted-chord, #newest-chord { font-size: 40px; font-weight: 700; min-width: 3.5em; }
+  #newest-chord { color: var(--muted); }
+  canvas { cursor: default; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Chordino Realtime</h1>
+    <button id="listen">Start listening</button>
+    <span id="status">Listens to the microphone through chord-processor.mjs, as an app would, and shows what it posts next to the bins behind it.</span>
+    <span class="export">
+      <button id="export" disabled title="Posted chords, chord probabilities and chroma of the last 10 minutes, laid out for an AI to analyze">Export for AI</button>
+      <select id="export-step" title="Timeline window">
+        <option value="0.25">every 0.25 s</option>
+        <option value="0.5" selected>every 0.5 s</option>
+        <option value="1">every 1 s</option>
+      </select>
+    </span>
+  </header>
+  <div class="controls">
+    <fieldset id="toggles"></fieldset>
+    <label>Window
+      <select id="window">
+        <option value="5">5 s</option>
+        <option value="10" selected>10 s</option>
+        <option value="20">20 s</option>
+        <option value="40">40 s</option>
+      </select>
+    </label>
+    <label title="processorOptions.delayMs: how far behind the newest audio the chord posted is read">Delay
+      <select id="delay">
+        <option value="0">0 ms</option>
+        <option value="500">500 ms</option>
+        <option value="1000" selected>1000 ms</option>
+      </select>
+    </label>
+  </div>
+  <div class="now">
+    <div>
+      <div class="caption">posted</div>
+      <div id="posted-chord">–</div>
+    </div>
+    <div>
+      <div class="caption">newest frames</div>
+      <div id="newest-chord">–</div>
+    </div>
+    <div id="time"></div>
+    <ol id="candidates"></ol>
+  </div>
+  <main id="panels"></main>
+  <script type="module" src="./realtime.js"></script>
+</body>
+</html>

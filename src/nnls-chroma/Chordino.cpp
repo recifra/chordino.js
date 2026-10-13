@@ -679,16 +679,15 @@ Chordino::getRemainingFeatures()
         }
         chordogram.push_back(currentChordSalience);
 #ifdef CHORDINO_INSPECT
+        int gate = 0;
+        if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
+        else if (!confident) gate = 2;
         // Only frames this call ran NNLS on have their chroma and semitones here
-        if (iFrame >= nCached) {
-            int gate = 0;
-            if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
-            else if (!confident) gate = 2;
-            const Feature &frameChromas = chromaList[iFrame - nCached];
-            chordinoInspectFrame(frameChromas.timestamp.sec + frameChromas.timestamp.nsec / 1e9,
-                                 frameChromas.values,
-                                 smoothedChroma, currentChordSalience, inspectSemitones[iFrame - nCached].data(), gate);
-        }
+        bool fresh = iFrame >= nCached;
+        chordinoInspectFrame(timestamps[iFrame].sec + timestamps[iFrame].nsec / 1e9,
+                             fresh ? &chromaList[iFrame - nCached].values : nullptr,
+                             smoothedChroma, currentChordSalience,
+                             fresh ? inspectSemitones[iFrame - nCached].data() : nullptr, gate);
 #endif
         report(progressChroma, progressSalience, iFrame + 1, nFrame);
     }

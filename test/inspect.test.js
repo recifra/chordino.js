@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, test } from 'node:test';
 
-import { analyzeChords, decodeMp3, detectChords, loadChordino, loadScript, paths, synthChord } from './helpers.js';
+import { analyzeChords, decodeMp3, detectChords, feed, loadChordino, loadScript, paths, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
 const OUTPUTS = { chroma: 24, smoothedchroma: 24, chordsalience: null, semitonespectrum: 84 };
@@ -67,6 +67,38 @@ describe('inspect build', () => {
     assert.deepEqual(top3.sort(), ['C', 'E', 'G']);
     const salience = middleFrame(analysis, 'chordsalience');
     assert.equal(analysis.chordsalience.binNames[argmax(salience)], 'C');
+  });
+
+  test('getPartialAnalysis keeps every frame its bins while feeding', async () => {
+    const { Module } = inspect;
+    const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
+    const rows = (analysis, frame) => ['chroma', 'semitonespectrum'].map((output) => {
+      const { binCount, values } = analysis[output];
+      return Array.from(values.subarray(frame * binCount, (frame + 1) * binCount));
+    });
+    const firstSeen = new Map();
+    let after = -1;
+    const instance = Module.initializePlugin(sampleRate, 4096, true);
+    try {
+      const all = feed(inspect, samples, sampleRate, () => Module.getPartialAnalysis(instance, -1), {
+        instance,
+        afterEach: () => {
+          const analysis = Module.getPartialAnalysis(instance, after);
+          analysis.times.forEach((time, frame) => {
+            assert.ok(time > after, `frame at ${time} is not after ${after}`);
+            firstSeen.set(time, rows(analysis, frame));
+          });
+          after = analysis.times.at(-1) ?? after;
+        },
+      });
+
+      assert.deepEqual(all.chords, Module.getPartialResult(instance));
+      assert.equal(all.times.length, firstSeen.size);
+      // Later calls have no NNLS output for these frames: the bins come from when they were new
+      all.times.forEach((time, frame) => assert.deepEqual(rows(all, frame), firstSeen.get(time), `frame at ${time}`));
+    } finally {
+      Module.releasePlugin(instance);
+    }
   });
 
   test('semitone bins start at A0', () => {

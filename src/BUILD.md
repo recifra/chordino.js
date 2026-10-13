@@ -42,18 +42,20 @@ An app ships the four files at the top of `build/` together, in one directory.
 The worker and the worklet share the one `.wasm` (15 KB + 271 KB; the old
 single-file bundles inlined it in each, 372 KB apiece).
 
-## Inspect build (examples/player)
+## Inspect build (examples/player, examples/realtime)
 The player in `examples/player` visualizes the per-frame bins Chordino computes
-(chroma, smoothed chroma, chord salience, semitone spectrum). It uses its own
-bundle so the production one keeps its size and API: `-DCHORDINO_INSPECT` turns
-on the hooks in `nnls-chroma/ChordinoInspect.h` and `inspect.cpp` adds
-`getAnalysis`.
+(chroma, smoothed chroma, chord salience, semitone spectrum) for a recording;
+`examples/realtime` does the same live from the microphone, next to the chords
+the production worklet posts. They use their own bundle so the production one
+keeps its size and API: `-DCHORDINO_INSPECT` turns on the hooks in
+`nnls-chroma/ChordinoInspect.h` and `inspect.cpp` adds `getAnalysis`, and
+`getPartialAnalysis` for reading while still feeding audio.
 
 ## Examples
 `examples/lib` and `examples/player/chordino-inspect.js` are symlinks into
 `build/`, so build first. Serve `examples/` (e.g. `python3 -m http.server -d
-examples`), open `/player/` and drop an audio file on the page; `/extract/` and
-`/realtime/` try the production build.
+examples`), open `/player/` and drop an audio file on the page, or `/realtime/`
+and start listening; `/extract/` tries the production build alone.
 
 ## Tests
 Run from the repository root. They load the files in `build/`, so build first.
