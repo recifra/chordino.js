@@ -22,7 +22,7 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 273 KB (110 KB gzipped) | Chordino and the Vamp host SDK |
+| `chordino.wasm` | 127 KB (58 KB gzipped) | Chordino and the Vamp host SDK |
 | `chordino.mjs` | 15 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |

@@ -325,16 +325,10 @@ Chordino::getRemainingFeatures()
         meanTuningReal += m_meanTunings[iBPS] * cosvalues[iBPS];
         meanTuningImag += m_meanTunings[iBPS] * sinvalues[iBPS];
     }
-    float cumulativetuning = 440 * pow(2,atan2(meanTuningImag, meanTuningReal)/(24*M_PI));
     float normalisedtuning = atan2(meanTuningImag, meanTuningReal)/(2*M_PI);
     int intShift = floor(normalisedtuning * 3);
     float floatShift = normalisedtuning * 3 - intShift; // floatShift is a really bad name for this
-		    
-    char buffer0 [50];
-		
-    sprintf(buffer0, "estimated tuning: %0.1f Hz", cumulativetuning);
-		    
-		    
+
     /** Tune Log-Frequency Spectrogram
         calculate a tuned log-frequency spectrogram (currentTunedSpec): use the tuning estimated above (kinda f0) to 
         perform linear interpolation on the existing log-frequency spectrogram (kinda currentLogSpectrum).

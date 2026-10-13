@@ -16,8 +16,10 @@ mkdir -p "$OUT/inspect"
 
 # One ES module plus one .wasm, so an app shipping both the worker and the
 # worklet carries the wasm once. Closure, no filesystem and LTO only shrink the
-# glue (78 KB -> 15 KB); -Oz would save 75 KB of wasm but doubles decode time.
+# glue (78 KB -> 15 KB); -Oz would save 48 KB of wasm but doubles decode time.
+# noiostream.h keeps libc++'s streams out of the wasm (273 KB -> 127 KB).
 emcc --bind -O3 --closure 1 -flto \
+    -include noiostream.h \
     -s FILESYSTEM=0 \
     -s ALLOW_MEMORY_GROWTH \
     -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=createChordino \

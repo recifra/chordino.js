@@ -17,7 +17,11 @@ npm run build
 `npm run build` runs both halves, which can also run on their own:
 
 - `npm run build:wasm` compiles the C++ with `emcc`; the commands and flags are
-  in `src/build.sh`. Needs `VAMP_PATH`.
+  in `src/build.sh`. Needs `VAMP_PATH`. The production module force-includes
+  `src/noiostream.h`, which drops every `std::cerr` write so that libc++'s
+  streams stay out of the wasm (they were more than half of it); the inspect
+  build keeps them. Anything new that formats text should do it without
+  streams or `printf`, or the size comes back.
 - `npm run build:js` type-checks the TypeScript in `src/js/` (`tsc -b src/js`),
   has esbuild minify it into ES modules and copies `src/js/chordino.d.mts`
   next to them. It needs no `emcc`, so after a change to the workers or the
@@ -56,7 +60,7 @@ Everything lands in `build/`:
   below. Not for apps, and not in the package.
 
 An app ships the five files at the top of `build/` together, in one directory.
-The two workers share the one `.wasm` (15 KB + 273 KB; the old single-file
+The two workers share the one `.wasm` (15 KB + 127 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
 2 and 1 KB of their own.
 

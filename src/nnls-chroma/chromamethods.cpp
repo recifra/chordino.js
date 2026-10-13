@@ -21,7 +21,6 @@
 #include <cmath>
 #include <list>
 #include <iostream>
-#include <sstream>
 #include <cassert>
 #include <cstdlib>
 #include <cstdio>
@@ -411,14 +410,11 @@ vector<string> chordDictionary(vector<float> *mchorddict, vector<vector<int> > *
                 loadedChordDict.push_back(tempChordDict[24*iType+((kSemitone - iSemitone + 12) % 12) + 12]);
                 if (tempChordDict[24*iType+((kSemitone - iSemitone + 12) % 12) + 12] > 0) tempchordnotes.push_back(MIDI_basenote + (kSemitone+12+6) % 12 - 6 + 24);
             }
-            ostringstream os;				
-            if (slashNotation.empty()) {
-                os << notenames[12+iSemitone] << tempChordNames[iType];
-            } else {
-                os << notenames[12+iSemitone] << tempChordNames[iType] << "/" << slashNotation;
-            }
-            // cerr << os.str() << endl;
-            loadedChordNames.push_back(os.str());                
+            // Concatenated rather than through an ostringstream, which would
+            // link libc++'s streams into the wasm (see src/noiostream.h)
+            string chordName = string(notenames[12+iSemitone]) + tempChordNames[iType];
+            if (!slashNotation.empty()) chordName += "/" + slashNotation;
+            loadedChordNames.push_back(chordName);
             
             m_chordnotes->push_back(tempchordnotes);
             // for (int iNote = 0; iNote < tempchordnotes.size(); ++iNote) {
