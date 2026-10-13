@@ -15,14 +15,13 @@ npm run build
 `npm run build` runs both halves, which can also run on their own:
 
 - `npm run build:wasm` compiles the C++ with `emcc`; the commands and flags are
-  in `src/build.sh`. The production module force-includes
-  `src/noiostream.h`, which drops every `std::cerr` write so that libc++'s
-  streams stay out of the wasm (they were more than half of it); the inspect
-  build keeps them. Anything new that formats text should do it without
-  streams or `printf`, or the size comes back. The Vamp SDK is no longer
+  in `src/build.sh`. The production module is all C, so no libc++ comes in
+  (its streams alone were once more than half of the wasm); only the inspect
+  build has C++, in `src/inspect.cpp`. Anything new that formats text should
+  do it without `printf`, or the size comes back. The Vamp SDK is no longer
   needed: Chordino, a Vamp plugin upstream, is the `chordino_t` of
   `src/chordino.h`, with no descriptors or parameters (they are constants in
-  `src/nnls-chroma/Chordino.cpp`); `src/session.c` and `src/spectrum.c` do
+  `src/nnls-chroma/Chordino.c`); `src/session.c` and `src/spectrum.c` do
   what the SDK's `PluginBufferingAdapter` and `PluginInputDomainAdapter` did,
   with the same results, over KISS FFT 131.2.0 in `src/kissfft/` (the files
   the build uses, unchanged), with the Hann window of its `Window` in
@@ -67,7 +66,7 @@ Everything lands in `build/`:
   below. Not for apps, and not in the package.
 
 An app ships the five files at the top of `build/` together, in one directory.
-The two workers share the one `.wasm` (5 KB + 84 KB; the old single-file
+The two workers share the one `.wasm` (5 KB + 70 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
 2 and 1 KB of their own.
 

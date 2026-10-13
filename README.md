@@ -22,7 +22,7 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 84 KB (41 KB gzipped) | Chordino, with KISS FFT |
+| `chordino.wasm` | 70 KB (37 KB gzipped) | Chordino, with KISS FFT |
 | `chordino.mjs` | 5 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |

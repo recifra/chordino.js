@@ -8,7 +8,7 @@ set -e
 cd "$(dirname "$0")"
 
 OUT=../build
-SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/chromamethods.c nnls-chroma/viterbi.c
+SOURCES="nnls-chroma/Chordino.c nnls-chroma/chromamethods.c nnls-chroma/viterbi.c
     nnls-chroma/nnls.c session.c spectrum.c window.c kissfft.c realtime.c
     chordextract.c"
 # Nothing of the Vamp SDK: session.c and spectrum.c do what its host adapters
@@ -21,11 +21,10 @@ mkdir -p "$OUT/inspect"
 # One ES module plus one .wasm, so an app shipping both the worker and the
 # worklet carries the wasm once. Closure, no filesystem and LTO only shrink the
 # glue (78 KB -> 15 KB), and chordextract.js in place of embind takes it to
-# 7 KB; EXPORT_KEEPALIVE=0 leaves the C functions it wraps off Module.
-# noiostream.h keeps libc++'s streams out of the wasm (273 KB -> 127 KB);
-# -Oz would save 48 KB more but doubles decode time.
+# 7 KB; EXPORT_KEEPALIVE=0 leaves the C functions it wraps off Module. All of
+# it is C, so no libc++ comes in (its streams alone once made the wasm 273 KB
+# instead of 127); -Oz would save 24 KB more but doubles decode time.
 emcc -O3 --closure 1 -flto $FLAGS \
-    -include noiostream.h \
     --post-js chordextract.js \
     -s FILESYSTEM=0 \
     -s EXPORT_KEEPALIVE=0 \

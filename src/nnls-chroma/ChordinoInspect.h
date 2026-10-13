@@ -5,7 +5,7 @@
   examples/realtime).
 
   Only compiled when CHORDINO_INSPECT is defined, which the separate
-  chordino-inspect.js build does (see BUILD.md). Without it Chordino.cpp
+  chordino-inspect.js build does (see BUILD.md). Without it Chordino.c
   compiles to exactly what ships in chordino.js. The hooks are free functions so
   src/chordino.h keeps its API; src/inspect.cpp implements them.
 */
@@ -15,28 +15,34 @@
 
 #ifdef CHORDINO_INSPECT
 
-#include <string>
-#include <vector>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// Called once per chordino_decode(), before the first frame.
-void chordinoInspectBegin(const std::vector<std::string> &chordNames);
+// Called once per chordino_decode(), before the first frame, with the names of
+// the nChord chords.
+void chordinoInspectBegin(int nChord, char *const *chordNames);
 
 // Called for every frame, in order, with its time in seconds.
 //  chroma:         24 bins, bass (0-11) stacked under treble (12-23), A-based
 //  smoothedChroma: the 24 bins the chord matcher actually scores
-//  salience:       one value per chord in chordNames, after the confidence gate
+//  salience:       one value per chord, after the confidence gate
 //                  (what the Viterbi decoder receives)
 //  semitones:      84 semitone activations, A0 upwards
 //  gate:           confidence gate outcome: 0 passed, 1 the best chord did not
 //                  beat N by enough, 2 a chord on another root came too close
 // chroma and semitones are null for the frames an earlier call already ran NNLS
-// on (see rawChromas in Chordino.cpp): they are only worked out once.
+// on (see rawChromas in Chordino.c): they are only worked out once.
 void chordinoInspectFrame(double seconds,
-                          const std::vector<float> *chroma,
-                          const std::vector<double> &smoothedChroma,
-                          const std::vector<double> &salience,
+                          const float *chroma,
+                          const double *smoothedChroma,
+                          const double *salience,
                           const float *semitones,
                           int gate);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 

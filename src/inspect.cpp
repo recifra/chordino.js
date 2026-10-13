@@ -33,7 +33,7 @@ struct Collected {
 Collected collected;
 
 // Chordino hands over a frame's chroma and semitones only the first time it
-// decodes it (see rawChromas in Chordino.cpp), so while getPartialAnalysis is in use
+// decodes it (see rawChromas in Chordino.c), so while getPartialAnalysis is in use
 // they are kept here, by frame time, for the calls after that.
 struct Remembered {
     vector<float> chroma;
@@ -91,15 +91,15 @@ emscripten::val bins(const vector<string> &names, const vector<float> &values) {
 
 }
 
-void chordinoInspectBegin(const vector<string> &chordNames) {
+void chordinoInspectBegin(int nChord, char *const *chordNames) {
     collected = Collected();
-    collected.chordNames = chordNames;
+    collected.chordNames = vector<string>(chordNames, chordNames + nChord);
 }
 
 void chordinoInspectFrame(double time,
-                          const vector<float> *chroma,
-                          const vector<double> &smoothedChroma,
-                          const vector<double> &salience,
+                          const float *chroma,
+                          const double *smoothedChroma,
+                          const double *salience,
                           const float *semitones,
                           int gate) {
     if (!collected.anyFrame) {
@@ -107,7 +107,7 @@ void chordinoInspectFrame(double time,
         collected.firstFrame = time;
     }
     if (chroma && partial) {
-        remembered[time] = Remembered{*chroma, vector<float>(semitones, semitones + 84)};
+        remembered[time] = Remembered{vector<float>(chroma, chroma + 24), vector<float>(semitones, semitones + 84)};
     }
     // As a float, like the times handed to JS, which is where collectAfter comes from
     if (partial && float(time) <= collectAfter) {
@@ -117,13 +117,13 @@ void chordinoInspectFrame(double time,
         auto it = remembered.find(time);
         bool kept = it != remembered.end();
         // Decoded before getPartialAnalysis was first called: nothing was kept
-        chroma = kept ? &it->second.chroma : &noChroma;
+        chroma = kept ? it->second.chroma.data() : noChroma.data();
         semitones = kept ? it->second.semitones.data() : noSemitones.data();
     }
     collected.times.push_back(time);
-    collected.chroma.insert(collected.chroma.end(), chroma->begin(), chroma->end());
-    collected.smoothedChroma.insert(collected.smoothedChroma.end(), smoothedChroma.begin(), smoothedChroma.end());
-    collected.salience.insert(collected.salience.end(), salience.begin(), salience.end());
+    collected.chroma.insert(collected.chroma.end(), chroma, chroma + 24);
+    collected.smoothedChroma.insert(collected.smoothedChroma.end(), smoothedChroma, smoothedChroma + 24);
+    collected.salience.insert(collected.salience.end(), salience, salience + collected.chordNames.size());
     collected.semitones.insert(collected.semitones.end(), semitones, semitones + 84);
     collected.gate.push_back(gate);
 }
