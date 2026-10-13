@@ -4,7 +4,7 @@ import { before, beforeEach, describe, test } from 'node:test';
 import { concat, decodeMp3, loadWorker, paths, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
-// Share of the progress src/js/chord-worker.mjs gives to feeding the audio
+// Share of the progress src/js/chord-worker.ts gives to feeding the audio
 const FEED_SHARE = 0.25;
 
 /**

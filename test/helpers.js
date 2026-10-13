@@ -65,7 +65,7 @@ function mixDown(channels) {
 }
 
 /**
- * Same feeding loop as src/js/chord-worker.mjs; `read` gets the instance once
+ * Same feeding loop as src/js/chord-worker.ts; `read` gets the instance once
  * everything is fed, and `afterEach` after every buffer, if given.
  */
 export function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 4096, instance, afterEach } = {}) {

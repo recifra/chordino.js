@@ -1,0 +1,6 @@
+{
+  // The worker and the worklet run in different global scopes, whose typings
+  // clash, so each is checked as a project of its own
+  "files": [],
+  "references": [{ "path": "./tsconfig.worker.json" }, { "path": "./tsconfig.worklet.json" }]
+}

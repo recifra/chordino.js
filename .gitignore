@@ -5,3 +5,4 @@ node_modules
 training
 src/chordino-inspect.js
 build
+*.tsbuildinfo

@@ -1,8 +1,7 @@
 #!/bin/bash
-# Builds everything into build/ at the repository root (see BUILD.md):
-#   chordino.mjs, chordino.wasm    production module, shared by
-#   chord-worker.mjs               the Web Worker and
-#   chord-processor.mjs            the AudioWorklet (copied from src/js)
+# Builds the wasm side into build/ at the repository root (see BUILD.md):
+#   chordino.mjs, chordino.wasm    production module, shared by the Web Worker
+#                                  and the AudioWorklet (npm run build:js)
 #   inspect/chordino-inspect.js    inspection build for examples/player
 # Needs emcc on the PATH and VAMP_PATH pointing at a vamp-plugin-sdk checkout.
 set -e
@@ -27,7 +26,6 @@ emcc --bind -O3 --closure 1 -flto \
     -o "$OUT/chordino.mjs" \
     $SOURCES $VAMP
 chmod 644 "$OUT/chordino.wasm"
-cp js/chord-worker.mjs js/chord-processor.mjs "$OUT/"
 
 # Separate single-file bundle with the CHORDINO_INSPECT hooks and getAnalysis,
 # so the production module keeps its size and API

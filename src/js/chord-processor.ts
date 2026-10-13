@@ -18,13 +18,27 @@
 // what chord-worker.mjs finds in the same audio (about 95% of the time at 0, 99%
 // at 1000).
 
-import createChordino from './chordino.mjs';
+import createChordino, { type Chord, type ChordinoModule } from './chordino.mjs';
+
+interface ChordProcessorOptions {
+  wasmBinary?: BufferSource;
+  delayMs?: number;
+}
+
+type ProcessorMessage =
+  | { type: 'ready' }
+  | { type: 'chordResult'; result: Chord }
+  | { type: 'error'; message: string }
+  | { type: 'stopped' };
 
 // Every node in this AudioWorkletGlobalScope shares one wasm instance
-let chordino = null;
+let chordino: Promise<ChordinoModule> | null = null;
 
-function loadChordino(wasmBinary) {
-  chordino ??= new Promise((resolve, reject) => {
+function loadChordino(wasmBinary: BufferSource | undefined): Promise<ChordinoModule> {
+  chordino ??= new Promise<ChordinoModule>((resolve, reject) => {
+    if (!wasmBinary) {
+      throw new Error('expected the bytes of chordino.wasm in processorOptions.wasmBinary');
+    }
     createChordino({
       // The glue would fetch chordino.wasm itself, which worklets cannot do. It
       // has no failure path for this hook, hence the outer promise.
@@ -33,7 +47,7 @@ function loadChordino(wasmBinary) {
         return {};
       },
     }).then(resolve, reject);
-  }).catch((err) => {
+  }).catch((err: unknown) => {
     // Let the next node try again, with other bytes
     chordino = null;
     throw err;
@@ -42,33 +56,38 @@ function loadChordino(wasmBinary) {
 }
 
 class ChordProcessor extends AudioWorkletProcessor {
-  constructor(options) {
+  private stopped = false;
+  private module: ChordinoModule | undefined;
+  instance: number | undefined;
+  private pBuffer = 0;
+  private bufferIndex = 0;
+  private readonly bufferSize = 4096;
+  private lastChord: string | undefined;
+  private lastChangeTimeMs = Math.trunc(currentTime * 1000);
+  // Don't report what was read where the input is near-silent, so the
+  // matcher's best fit to the noise floor is never shown as a chord.
+  private readonly silenceRmsThreshold = 0.01;
+  // How much audio each read decodes: enough for the HMM/Viterbi smoothing to
+  // settle, bounded so the cost per getPartialResult() call stays flat however
+  // long the session runs.
+  private readonly windowMs = 10000;
+  // How far behind the newest frame the chord shown is read. The newest frames
+  // are the least settled ones: the chroma smoothing runs both ways and the
+  // Viterbi path can still change there, so they need a little of the audio
+  // after them to come out as they would in the offline extraction.
+  private readonly delayMs: number;
+  // Quiet stretches of the input still in the window, as [startMs, endMs], and
+  // the end of the last buffer that was not quiet.
+  private readonly quietStretches: [startMs: number, endMs: number][] = [];
+  private loudUntilMs = -Infinity;
+  private bufferStartMs = 0;
+  private readonly audioBuffer = new Float32Array(this.bufferSize);
+  /** Settles once the wasm is up, or has failed to load */
+  readonly ready: Promise<void>;
+
+  constructor(options?: { processorOptions?: ChordProcessorOptions }) {
     super();
-    this.stopped = false;
-    this.module = undefined;
-    this.instance = undefined;
-    this.bufferIndex = 0;
-    this.bufferSize = 4096;
-    this.lastChord = undefined;
-    this.lastChangeTimeMs = Math.trunc(currentTime * 1000);
-    // Don't report what was read where the input is near-silent, so the
-    // matcher's best fit to the noise floor is never shown as a chord.
-    this.silenceRmsThreshold = 0.01;
-    // How much audio each read decodes: enough for the HMM/Viterbi smoothing to
-    // settle, bounded so the cost per getPartialResult() call stays flat however
-    // long the session runs.
-    this.windowMs = 10000;
-    // How far behind the newest frame the chord shown is read. The newest frames
-    // are the least settled ones: the chroma smoothing runs both ways and the
-    // Viterbi path can still change there, so they need a little of the audio
-    // after them to come out as they would in the offline extraction.
     this.delayMs = options?.processorOptions?.delayMs ?? 1000;
-    // Quiet stretches of the input still in the window, as [startMs, endMs], and
-    // the end of the last buffer that was not quiet.
-    this.quietStretches = [];
-    this.loudUntilMs = -Infinity;
-    this.bufferStartMs = 0;
-    this.audioBuffer = new Float32Array(this.bufferSize);
     this.port.onmessage = this.handleMessage.bind(this);
     this.ready = loadChordino(options?.processorOptions?.wasmBinary).then(
       (module) => {
@@ -79,30 +98,34 @@ class ChordProcessor extends AudioWorkletProcessor {
         this.pBuffer = module._malloc(this.bufferSize * Float32Array.BYTES_PER_ELEMENT);
         // realtime: each frame comes out as soon as its own audio is in
         this.instance = module.initializePlugin(sampleRate, this.bufferSize, true);
-        this.port.postMessage({ type: 'ready' });
+        this.post({ type: 'ready' });
       },
-      (err) => {
-        this.port.postMessage({ type: 'error', message: String(err?.message ?? err) });
+      (err: unknown) => {
+        this.post({ type: 'error', message: String((err as Error | null)?.message ?? err) });
       },
     );
   }
 
-  async handleMessage(event) {
+  private post(message: ProcessorMessage) {
+    this.port.postMessage(message);
+  }
+
+  private handleMessage(event: MessageEvent) {
     if (event.data.type === 'stop') {
       this.stopped = true;
     }
   }
 
-  process(inputs, _outputs, _parameters) {
-    if (!this.instance) {
+  process(inputs: Float32Array[][], _outputs: Float32Array[][], _parameters: Record<string, Float32Array>): boolean {
+    const { module, instance } = this;
+    if (!module || !instance) {
       if (this.stopped) {
-        this.port.postMessage({ type: 'stopped' });
+        this.post({ type: 'stopped' });
       }
       return !this.stopped;
     }
     const input = inputs[0];
     if (input && input.length > 0) {
-      /** @type {Float32Array} */
       const channelData = input[0];
       const currentTimeMs = Math.trunc(currentTime * 1000);
 
@@ -121,10 +144,11 @@ class ChordProcessor extends AudioWorkletProcessor {
         }
         const rms = Math.sqrt(sumSq / this.bufferSize);
         const bufferEndMs = this.bufferStartMs + (this.bufferSize / sampleRate) * 1000;
+        const lastQuiet = this.quietStretches.at(-1);
         if (rms >= this.silenceRmsThreshold) {
           this.loudUntilMs = bufferEndMs;
-        } else if (this.bufferStartMs - (this.quietStretches.at(-1)?.[1] ?? -Infinity) < 1) {
-          this.quietStretches.at(-1)[1] = bufferEndMs;
+        } else if (lastQuiet && this.bufferStartMs - lastQuiet[1] < 1) {
+          lastQuiet[1] = bufferEndMs;
         } else {
           this.quietStretches.push([this.bufferStartMs, bufferEndMs]);
         }
@@ -135,8 +159,8 @@ class ChordProcessor extends AudioWorkletProcessor {
         // Every buffer goes in, quiet ones too, as in the offline extraction:
         // leaving one out would splice the audio around it and put Chordino's
         // clock behind currentTime.
-        this.module.HEAPF32.set(this.audioBuffer, this.pBuffer >> 2);
-        this.module.processBuffer(this.instance, this.pBuffer, Math.trunc(this.bufferStartMs));
+        module.HEAPF32.set(this.audioBuffer, this.pBuffer >> 2);
+        module.processBuffer(instance, this.pBuffer, Math.trunc(this.bufferStartMs));
 
         // Nothing to read once the input has been quiet for longer than the point
         // read lags behind it (frames come out about 0.2 s after their audio).
@@ -144,8 +168,8 @@ class ChordProcessor extends AudioWorkletProcessor {
           // Read back the results, re-decoding the last windowMs each call. Not
           // getResult: that one is for the end of the audio, and pads what is
           // still buffered with zeros the next buffers would then follow.
-          this.module.forgetBefore(this.instance, currentTimeMs - this.windowMs);
-          const chordList = this.module.getPartialResult(this.instance);
+          module.forgetBefore(instance, currentTimeMs - this.windowMs);
+          const chordList = module.getPartialResult(instance);
 
           // The closing N Chordino adds sits on the newest frame; the chord read is
           // the one sounding delayMs before that. Ignore an N there: the EMA
@@ -158,7 +182,7 @@ class ChordProcessor extends AudioWorkletProcessor {
             if (chordItem.chord !== 'N' && this.lastChord !== chordItem.chord) {
               this.lastChord = chordItem.chord;
               this.lastChangeTimeMs = currentTimeMs;
-              this.port.postMessage({ type: 'chordResult', result: chordItem });
+              this.post({ type: 'chordResult', result: chordItem });
             }
           }
         }
@@ -170,10 +194,10 @@ class ChordProcessor extends AudioWorkletProcessor {
       return true;
     }
     // Release memory
-    this.module.releasePlugin(this.instance);
+    module.releasePlugin(instance);
     this.instance = undefined;
-    this.module._free(this.pBuffer);
-    this.port.postMessage({ type: 'stopped' });
+    module._free(this.pBuffer);
+    this.post({ type: 'stopped' });
     return false;
   }
 }

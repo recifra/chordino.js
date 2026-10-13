@@ -11,31 +11,44 @@
 //                                { timestamps: [[chord, seconds], ..., ['', end]] }
 //   { type: 'error', message }   instead of done when the analysis failed
 
-import createChordino from './chordino.mjs';
+import createChordino, { type Chord, type ChordinoModule } from './chordino.mjs';
+
+interface ChordTimestamps {
+  timestamps: [chord: string, seconds: number][];
+}
+
+type WorkerMessage =
+  | { type: 'progress'; value: number }
+  | { type: 'done'; result: ChordTimestamps }
+  | { type: 'error'; message: string };
 
 const BUFFER_SIZE = 4096;
 // Share of the time spent feeding the audio in; getResult() takes the rest and
 // reports its own progress (measured on a 5 minute song).
 const FEED_SHARE = 0.25;
 
-let chordino = null;
+let chordino: Promise<ChordinoModule> | null = null;
 let reportedPercent = -1;
 
-onmessage = async ({ data }) => {
+onmessage = async ({ data }: MessageEvent) => {
   try {
-    chordino ??= createChordino().catch((err) => {
+    chordino ??= createChordino().catch((err: unknown) => {
       chordino = null;
       throw err;
     });
     const Module = await chordino;
-    postMessage({ type: 'done', result: detect(Module, data?.samples, data?.sampleRate) });
+    post({ type: 'done', result: detect(Module, data?.samples, data?.sampleRate) });
   } catch (err) {
-    postMessage({ type: 'error', message: String(err?.message ?? err) });
+    post({ type: 'error', message: String((err as Error | null)?.message ?? err) });
   }
 };
 
-function detect(Module, samples, sampleRate) {
-  if (!(samples instanceof Float32Array) || !(sampleRate > 0)) {
+function post(message: WorkerMessage) {
+  postMessage(message);
+}
+
+function detect(Module: ChordinoModule, samples: unknown, sampleRate: unknown): ChordTimestamps {
+  if (!(samples instanceof Float32Array) || typeof sampleRate !== 'number' || !(sampleRate > 0)) {
     throw new Error('expected { samples: Float32Array, sampleRate }');
   }
   reportedPercent = -1;
@@ -63,11 +76,11 @@ function detect(Module, samples, sampleRate) {
   }
 }
 
-function progress(value) {
+function progress(value: number) {
   const percent = Math.floor(value * 100);
   if (percent !== reportedPercent) {
     reportedPercent = percent;
-    postMessage({ type: 'progress', value });
+    post({ type: 'progress', value });
   }
 }
 
@@ -77,16 +90,16 @@ function progress(value) {
  * Chordino closes with at the last frame becomes '' at the end of the audio,
  * unless the song already ends in no chord.
  */
-function toTimestamps(chords, duration) {
-  const round = (seconds) => Math.round(seconds * 1000) / 1000;
-  const timestamps = [];
+function toTimestamps(chords: Chord[], duration: number): ChordTimestamps {
+  const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+  const timestamps: ChordTimestamps['timestamps'] = [];
   for (const { chord, time } of chords.slice(0, -1)) {
     const label = chord === 'N' ? '' : chord;
     if (label !== (timestamps.at(-1)?.[0] ?? '')) {
       timestamps.push([label, round(time)]);
     }
   }
-  if (timestamps.length === 0 || timestamps.at(-1)[0] !== '') {
+  if (timestamps.at(-1)?.[0] !== '') {
     timestamps.push(['', round(duration)]);
   }
   return { timestamps };

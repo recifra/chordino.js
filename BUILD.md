@@ -1,15 +1,26 @@
+# Building chordino-wasm
+
 ## Requirements
 - emsdk (`emcc` on the PATH)
-- boost
 - vamp-plugin-sdk
+- Node.js, for TypeScript, esbuild and the tests (`npm install`)
 
 ## Build
-Run from the repository root; the commands and flags are in `src/build.sh`.
+Run from the repository root.
 
 ```sh
+npm install
 export VAMP_PATH=$HOME/Development/github/vamp-plugin-sdk
 npm run build
 ```
+
+`npm run build` runs both halves, which can also run on their own:
+
+- `npm run build:wasm` compiles the C++ with `emcc`; the commands and flags are
+  in `src/build.sh`. Needs `VAMP_PATH`.
+- `npm run build:js` type-checks the TypeScript in `src/js/` (`tsc -b src/js`)
+  and has esbuild minify it into ES modules. It needs no `emcc`, so after a
+  change to the worker or the worklet alone this is the one to run.
 
 Everything lands in `build/`:
 
@@ -27,20 +38,32 @@ Everything lands in `build/`:
   `initializePlugin(sampleRate, blockSize, true)` gets each frame out as soon
   as its audio is in, half a block (186 ms at 44.1 kHz) sooner, at the cost of
   the first few frames, so the chords start that much after 0.
-- `chord-worker.mjs` (from `src/js/`): module worker that detects the chords of
-  a whole recording, posting its progress and then `{"timestamps": [[chord,
-  seconds], ..., ["", end]]}`. `examples/extract/index.html` drives it,
-  including from a CDN on another origin (workers must start from the page's
-  origin).
-- `chord-processor.mjs` (from `src/js/`): AudioWorklet for the microphone.
-  Worklets cannot fetch, so the page passes the wasm bytes in
+- `chord-worker.mjs` (from `src/js/chord-worker.ts`): module worker that
+  detects the chords of a whole recording, posting its progress and then
+  `{"timestamps": [[chord, seconds], ..., ["", end]]}`.
+  `examples/extract/index.html` drives it, including from a CDN on another
+  origin (workers must start from the page's origin).
+- `chord-processor.mjs` (from `src/js/chord-processor.ts`): AudioWorklet for
+  the microphone. Worklets cannot fetch, so the page passes the wasm bytes in
   `processorOptions.wasmBinary`; see `examples/realtime/index.html`.
 - `inspect/chordino-inspect.js`: inspection build for `examples/player`, see
   below. Not for apps.
 
 An app ships the four files at the top of `build/` together, in one directory.
-The worker and the worklet share the one `.wasm` (15 KB + 271 KB; the old
-single-file bundles inlined it in each, 372 KB apiece).
+The worker and the worklet share the one `.wasm` (15 KB + 273 KB; the old
+single-file bundles inlined it in each, 372 KB apiece); they add 1 KB and 3 KB
+of their own.
+
+## TypeScript
+The worker and the worklet run in different global scopes, a
+`DedicatedWorkerGlobalScope` and an `AudioWorkletGlobalScope`, whose typings
+clash. So `src/js/tsconfig.json` only references one project per scope:
+`tsconfig.worker.json` (lib `webworker`) and `tsconfig.worklet.json`
+(`@types/audioworklet`). Both import `./chordino.mjs`, typed by
+`src/js/chordino.d.mts` after the bindings at the end of
+`src/chordextract.cpp`; keep the two in step. esbuild transpiles each file on
+its own and leaves that import as it is, so `chordino.mjs` must sit next to
+them.
 
 ## Inspect build (examples/player, examples/realtime)
 The player in `examples/player` visualizes the per-frame bins Chordino computes
@@ -48,8 +71,8 @@ The player in `examples/player` visualizes the per-frame bins Chordino computes
 `examples/realtime` does the same live from the microphone, next to the chords
 the production worklet posts. They use their own bundle so the production one
 keeps its size and API: `-DCHORDINO_INSPECT` turns on the hooks in
-`nnls-chroma/ChordinoInspect.h` and `inspect.cpp` adds `getAnalysis`, and
-`getPartialAnalysis` for reading while still feeding audio.
+`src/nnls-chroma/ChordinoInspect.h` and `src/inspect.cpp` adds `getAnalysis`,
+and `getPartialAnalysis` for reading while still feeding audio.
 
 ## Examples
 `examples/lib` and `examples/player/chordino-inspect.js` are symlinks into
@@ -61,6 +84,5 @@ and start listening; `/extract/` tries the production build alone.
 Run from the repository root. They load the files in `build/`, so build first.
 
 ```sh
-npm install
 npm test
 ```
