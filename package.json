@@ -15,8 +15,16 @@
     "webassembly",
     "wasm"
   ],
+  "homepage": "https://github.com/recifra/chordino.js#readme",
+  "bugs": {
+    "url": "https://github.com/recifra/chordino.js/issues"
+  },
   "license": "GPL-2.0-or-later",
   "author": "Francimar Alves <mazinsw@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/recifra/chordino.js.git"
+  },
   "type": "module",
   "exports": {
     ".": {
