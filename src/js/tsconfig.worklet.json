@@ -4,5 +4,5 @@
     "lib": ["es2023"],
     "types": ["audioworklet"]
   },
-  "files": ["chord-processor.ts", "chordino.d.mts"]
+  "files": ["chord-processor.ts"]
 }

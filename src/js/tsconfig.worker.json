@@ -10,5 +10,5 @@
     "moduleResolution": "bundler",
     "verbatimModuleSyntax": true
   },
-  "files": ["chord-worker.ts", "chordino.d.mts"]
+  "files": ["chord-worker.ts", "chord-live-worker.ts", "chordino.d.mts"]
 }

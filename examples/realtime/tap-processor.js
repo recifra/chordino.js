@@ -1,6 +1,6 @@
 // Hands the microphone audio on to inspect-worker.js, in the same 4096-sample
-// buffers chord-processor.mjs feeds Chordino, each with the AudioContext time of
-// its first sample. The page sends it the worker's end of a MessageChannel as
+// buffers chord-processor.mjs hands chord-live-worker.mjs, each with the
+// AudioContext time of its first sample. The page sends it the worker's end of a MessageChannel as
 // { type: 'port', port }, so the audio never goes through the main thread, and
 // { type: 'stop' } to end it.
 

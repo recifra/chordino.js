@@ -4,7 +4,8 @@ A React 19 app built with Vite 8 that detects chords two ways:
 
 - from an audio file, in a Web Worker, showing progress and then the list of
   chords;
-- from the microphone, in an AudioWorklet, showing the chord being played.
+- from the microphone, through an AudioWorklet that hands it to a second Web
+  Worker, showing the chord being played.
 
 All of the chordino.js code is in two hooks in [src/chordino.ts](src/chordino.ts),
 `useChordDetection` and `useLiveChords`; [src/App.tsx](src/App.tsx) only renders
@@ -41,19 +42,17 @@ Copy [src/chordino.ts](src/chordino.ts) and set `worker.format` in
 ### How it fits together
 
 ```ts
+import ChordLiveWorker from 'chordino.js/chord-live-worker.mjs?worker';
 import ChordWorker from 'chordino.js/chord-worker.mjs?worker';
 import processorUrl from 'chordino.js/chord-processor.mjs?worker&url';
-import wasmUrl from 'chordino.js/chordino.wasm?url';
 ```
 
-- `?worker` has Vite bundle the worker together with the `chordino.mjs` it
+- `?worker` has Vite bundle each worker together with the `chordino.mjs` it
   imports, and gives back a constructor. Vite also emits `chordino.wasm`, which
-  that code loads, as an asset.
+  that code loads, as an asset, once for both.
 - `?worker&url` bundles the worklet the same way and gives back its URL, for
-  `audioWorklet.addModule`. Plain `?url` would not do: it copies the file alone,
-  and its import of `./chordino.mjs` would then fail in the build.
-- `?url` gives the URL of `chordino.wasm`, whose bytes the page fetches and
-  hands to the worklet, since worklets cannot fetch.
+  `audioWorklet.addModule`. It only hands the microphone to the live worker over
+  a `MessageChannel`, so it imports nothing.
 
 `vite.config.ts` needs one setting:
 
@@ -65,8 +64,10 @@ export default defineConfig({
 ```
 
 Vite bundles workers as `iife` by default, which swaps `import.meta.url` for
-`self.location`. An AudioWorklet has neither `self` nor `location`, so with the
-default the worklet fails with `self is not defined`; the worker would be fine.
+`self.location`. Up to chordino.js 0.1 the worklet imported `chordino.mjs`, and
+as an AudioWorklet has neither `self` nor `location`, it failed with `self is
+not defined`. It imports nothing now; the setting keeps the workers ES modules
+like the files in the package.
 
 `vite build` warns that `Module "node:module" has been externalized for browser
 compatibility`. That import is in the branch of `chordino.mjs` that only runs

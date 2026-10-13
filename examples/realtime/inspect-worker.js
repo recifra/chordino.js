@@ -1,5 +1,5 @@
 // Runs the inspect build on the microphone audio tap-processor.js hands over, the
-// way chord-processor.mjs runs the production one: a realtime session, decoding
+// way chord-live-worker.mjs runs the production one: a realtime session, decoding
 // the last WINDOW_MS on every buffer, with the chord read delayMs behind the
 // newest frame. Messages to it:
 //   { type: 'start', sampleRate, delayMs, port }  port: where the audio comes in
@@ -8,7 +8,7 @@
 //   { type: 'ready', labels, templates, chromaNames, semitoneNames } on the first frames
 //   { type: 'frames', settled, pending, readAt, newest, path } after every buffer:
 //     settled: frames that just reached the read point, with the values the
-//              worklet's decision there was made on; each only comes once
+//              worker's decision there was made on; each only comes once
 //     pending: the frames after it, whose values still move with every buffer
 //     path:    the Viterbi path from the read point on, as [{ chord, start, end }]
 //   { type: 'error', message }
@@ -18,7 +18,7 @@
 importScripts('../lib/inspect/chordino-inspect.js');
 
 const BUFFER_SIZE = 4096;
-// As in chord-processor.mjs
+// As in chord-live-worker.mjs
 const WINDOW_MS = 10000;
 
 let instance = 0;
@@ -90,7 +90,7 @@ function analyze({ samples, startMs }) {
     announceLabels(analysis);
   }
 
-  // As in chord-processor.mjs: the closing N sits on the newest frame
+  // As in chord-live-worker.mjs: the closing N sits on the newest frame
   const newest = chords.at(-1).time;
   const readAt = newest - delayMs / 1000;
   const settled = [];

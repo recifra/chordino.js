@@ -1,7 +1,7 @@
 {
   "name": "chordino.js",
-  "version": "0.1.0",
-  "description": "Chord detection in the browser: the Chordino Vamp plugin compiled to WebAssembly, with a Web Worker for recordings and an AudioWorklet for live input",
+  "version": "0.2.0",
+  "description": "Chord detection in the browser: the Chordino Vamp plugin compiled to WebAssembly, with a Web Worker for recordings and an AudioWorklet feeding a Web Worker for live input",
   "keywords": [
     "chord",
     "chords",
@@ -32,6 +32,7 @@
       "default": "./build/chordino.mjs"
     },
     "./chord-worker.mjs": "./build/chord-worker.mjs",
+    "./chord-live-worker.mjs": "./build/chord-live-worker.mjs",
     "./chord-processor.mjs": "./build/chord-processor.mjs",
     "./chordino.wasm": "./build/chordino.wasm",
     "./package.json": "./package.json"
@@ -41,12 +42,13 @@
     "build/chordino.wasm",
     "build/chordino.d.mts",
     "build/chord-worker.mjs",
+    "build/chord-live-worker.mjs",
     "build/chord-processor.mjs"
   ],
   "scripts": {
     "build": "npm run build:wasm && npm run build:js",
     "build:wasm": "bash src/build.sh",
-    "build:js": "tsc -b src/js && esbuild src/js/chord-worker.ts src/js/chord-processor.ts --outdir=build --out-extension:.js=.mjs --format=esm --target=es2022 --minify && cp src/js/chordino.d.mts build/",
+    "build:js": "tsc -b src/js && esbuild src/js/chord-worker.ts src/js/chord-live-worker.ts src/js/chord-processor.ts --outdir=build --out-extension:.js=.mjs --format=esm --target=es2022 --minify && cp src/js/chordino.d.mts build/",
     "test": "node --test \"test/*.test.js\"",
     "prepublishOnly": "npm run build && npm test"
   },

@@ -20,7 +20,7 @@ npm run build
   in `src/build.sh`. Needs `VAMP_PATH`.
 - `npm run build:js` type-checks the TypeScript in `src/js/` (`tsc -b src/js`),
   has esbuild minify it into ES modules and copies `src/js/chordino.d.mts`
-  next to them. It needs no `emcc`, so after a change to the worker or the
+  next to them. It needs no `emcc`, so after a change to the workers or the
   worklet alone this is the one to run.
 
 Everything lands in `build/`:
@@ -32,7 +32,7 @@ Everything lands in `build/`:
   all of the work in one call, so `setProgressCallback(fn)` has it call `fn`
   with its progress (0 to 1) while it runs; `null` turns that off. It is for
   the end of the audio: it pads the samples still buffered with zeros. To read
-  while still feeding, as the worklet does, `getPartialResult` decodes the
+  while still feeding, as the live worker does, `getPartialResult` decodes the
   frames so far and leaves the buffered samples alone; each frame's chroma is
   worked out once and kept, and `forgetBefore(instance, milliseconds)` drops
   the frames before that time so every read decodes a bounded window.
@@ -44,24 +44,28 @@ Everything lands in `build/`:
   `{"timestamps": [[chord, seconds], ..., ["", end]]}`.
   `examples/extract/index.html` drives it, including from a CDN on another
   origin (workers must start from the page's origin).
-- `chord-processor.mjs` (from `src/js/chord-processor.ts`): AudioWorklet for
-  the microphone. Worklets cannot fetch, so the page passes the wasm bytes in
-  `processorOptions.wasmBinary`; see `examples/realtime/index.html`.
+- `chord-live-worker.mjs` (from `src/js/chord-live-worker.ts`): module worker
+  that runs Chordino on the microphone, posting each chord change.
+- `chord-processor.mjs` (from `src/js/chord-processor.ts`): AudioWorklet that
+  gathers the microphone into buffers and hands them to `chord-live-worker.mjs`
+  over a `MessageChannel`. It only copies: decoding on the audio thread overran
+  its render quanta, and iOS then dropped microphone samples to catch up, which
+  read everything about a semitone sharp. See `examples/realtime/index.html`.
 - `chordino.d.mts`: the types of `chordino.mjs`, for the package.
 - `inspect/chordino-inspect.js`: inspection build for `examples/player`, see
   below. Not for apps, and not in the package.
 
-An app ships the four files at the top of `build/` together, in one directory.
-The worker and the worklet share the one `.wasm` (15 KB + 273 KB; the old
-single-file bundles inlined it in each, 372 KB apiece); they add 1 KB and 3 KB
-of their own.
+An app ships the five files at the top of `build/` together, in one directory.
+The two workers share the one `.wasm` (15 KB + 273 KB; the old single-file
+bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
+2 and 1 KB of their own.
 
 ## TypeScript
-The worker and the worklet run in different global scopes, a
-`DedicatedWorkerGlobalScope` and an `AudioWorkletGlobalScope`, whose typings
+The workers and the worklet run in different global scopes,
+`DedicatedWorkerGlobalScope` and `AudioWorkletGlobalScope`, whose typings
 clash. So `src/js/tsconfig.json` only references one project per scope:
 `tsconfig.worker.json` (lib `webworker`) and `tsconfig.worklet.json`
-(`@types/audioworklet`). Both import `./chordino.mjs`, typed by
+(`@types/audioworklet`). The workers import `./chordino.mjs`, typed by
 `src/js/chordino.d.mts` after the bindings at the end of
 `src/chordextract.cpp`; keep the two in step. esbuild transpiles each file on
 its own and leaves that import as it is, so `chordino.mjs` must sit next to
@@ -71,7 +75,7 @@ them.
 The player in `examples/player` visualizes the per-frame bins Chordino computes
 (chroma, smoothed chroma, chord salience, semitone spectrum) for a recording;
 `examples/realtime` does the same live from the microphone, next to the chords
-the production worklet posts. They use their own bundle so the production one
+the production worker posts. They use their own bundle so the production one
 keeps its size and API: `-DCHORDINO_INSPECT` turns on the hooks in
 `src/nnls-chroma/ChordinoInspect.h` and `src/inspect.cpp` adds `getAnalysis`,
 and `getPartialAnalysis` for reading while still feeding audio.
@@ -93,10 +97,11 @@ npm test
 
 ## Publishing
 The npm package is `chordino.js`. Its contents are the `files` listed in
-`package.json` (the four files an app ships, plus `chordino.d.mts`) along with
+`package.json` (the five files an app ships, plus `chordino.d.mts`) along with
 `README.md` and `LICENSE`; `exports` maps `chordino.js` to `chordino.mjs`, and
-`chordino.js/chord-worker.mjs`, `chordino.js/chord-processor.mjs` and
-`chordino.js/chordino.wasm` to the files in `build/`. `npm publish` first runs
+`chordino.js/chord-worker.mjs`, `chordino.js/chord-live-worker.mjs`,
+`chordino.js/chord-processor.mjs` and `chordino.js/chordino.wasm` to the files
+in `build/`. `npm publish` first runs
 `prepublishOnly`, a full build and the tests, so it needs everything `npm run
 build` does. To see what would go out:
 

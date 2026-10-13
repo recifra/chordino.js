@@ -6,8 +6,8 @@ ways to run it:
 
 - **Whole recordings**, in a Web Worker: hand it the samples, get back the
   chords with their start times, and progress while it works.
-- **Live input**, in an AudioWorklet: feed it the microphone, get each chord
-  change as it happens.
+- **Live input**, in an AudioWorklet that hands the microphone to a Web
+  Worker: get each chord change as it happens.
 
 Both share one `chordino.wasm` and run with no server: everything happens in the
 page.
@@ -25,13 +25,14 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 | `chordino.wasm` | 273 KB (110 KB gzipped) | Chordino and the Vamp host SDK |
 | `chordino.mjs` | 15 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
-| `chord-processor.mjs` | 3 KB | AudioWorklet processor for live input |
+| `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |
+| `chord-processor.mjs` | 1 KB | AudioWorklet processor that hands live input to it |
 | `chordino.d.mts` | 2 KB | Types of `chordino.mjs` |
 
-The worker and the worklet are started from a URL, not imported, and each loads
-`chordino.mjs` from next to itself, which loads `chordino.wasm` the same way. So
-an app serves those four files together, from one directory; copy them into its
-static assets as part of its build:
+The workers and the worklet are started from a URL, not imported. Each worker
+loads `chordino.mjs` from next to itself, which loads `chordino.wasm` the same
+way. So an app serves those five files together, from one directory; copy them
+into its static assets as part of its build:
 
 ```sh
 mkdir -p public/chordino
@@ -39,7 +40,7 @@ cp node_modules/chordino.js/build/*.mjs node_modules/chordino.js/build/*.wasm pu
 ```
 
 Or load them from a CDN that mirrors npm, such as
-`https://cdn.jsdelivr.net/npm/chordino.js@0.1.0/build/`. A worker from another
+`https://cdn.jsdelivr.net/npm/chordino.js@0.2.0/build/`. A worker from another
 origin needs the shim shown below. With Vite there is nothing to copy: see
 [With Vite](#with-vite).
 
@@ -93,47 +94,65 @@ function createWorker(url) {
 }
 ```
 
-### Live input (AudioWorklet)
+### Live input (AudioWorklet and Web Worker)
 
-Worklets cannot fetch, so the page fetches `chordino.wasm` and hands its bytes
-to the processor:
+The AudioWorklet only gathers the microphone into buffers and hands them to a
+module worker, which runs Chordino. Decoding a buffer takes several
+milliseconds, against 2.7 ms for a whole render quantum at 48 kHz, and an audio
+thread that keeps overrunning its quanta makes iOS drop microphone samples to
+catch up, which reads everything about a semitone sharp. The two talk over a
+`MessageChannel`, so the audio never goes through the main thread:
 
 ```js
 const context = new AudioContext();
 const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
-const wasmBinary = await (await fetch(new URL('chordino.wasm', lib))).arrayBuffer();
+const worker = new Worker(new URL('chord-live-worker.mjs', lib), { type: 'module' });
 await context.audioWorklet.addModule(new URL('chord-processor.mjs', lib));
 
 const node = new AudioWorkletNode(context, 'chord-processor', {
   channelCount: 1,
   channelCountMode: 'explicit',
   channelInterpretation: 'discrete',
-  processorOptions: { wasmBinary, delayMs: 1000 },
 });
-node.port.onmessage = ({ data }) => {
+worker.onmessage = ({ data }) => {
   if (data.type === 'chordResult') {
     console.log(data.result.chord, 'since', data.result.time); // time on the context.currentTime clock
   }
 };
+const { port1, port2 } = new MessageChannel();
+worker.postMessage({ type: 'start', sampleRate: context.sampleRate, delayMs: 1000, port: port1 }, [port1]);
+node.port.postMessage({ type: 'port', port: port2 }, [port2]);
 context.createMediaStreamSource(stream).connect(node);
 node.connect(context.destination); // it outputs silence
 ```
 
-The processor posts:
+The worker posts:
 
 - `{ type: 'ready' }` once the wasm is up; audio before that is skipped;
 - `{ type: 'chordResult', result: { chord, time } }` on every chord change.
   `time` is when the chord started, in seconds on the `AudioContext` clock. It
   arrives `delayMs` plus about 0.2 s after that. Stretches of near silence
   post nothing;
-- `{ type: 'error', message }` when the wasm cannot load;
+- `{ type: 'error', message }` when it cannot start, as when the wasm cannot
+  load;
 - `{ type: 'stopped' }` after it is sent `{ type: 'stop' }` and has released
-  its memory. Wait for it before closing the context.
+  its memory; it can then be sent another `start`.
 
-`processorOptions.delayMs` (default 1000) is how far behind the newest audio the
-chord is read. The newest frames are the least settled, so a lower value shows
-chords sooner and a higher one makes them agree with what the worker finds in
-the same audio: about 95% of the time at 0 ms, 99% at 1000 ms.
+To stop listening, send the worklet `{ type: 'stop' }`, stop or terminate the
+worker (the plugin goes with it) and close the context.
+
+`delayMs` (default 1000) is how far behind the newest audio the chord is read.
+The newest frames are the least settled, so a lower value shows chords sooner
+and a higher one makes them agree with what `chord-worker.mjs` finds in the
+same audio: about 95% of the time at 0 ms, 99% at 1000 ms.
+
+The worklet sends the worker every buffer gathered since the worker last
+replied, so a worker that falls behind, on a slow device, reads once for
+several buffers instead of lagging a little further with each one.
+
+Up to 0.1, the worklet ran Chordino itself and took the wasm bytes in
+`processorOptions.wasmBinary`; it now takes no options and posts nothing.
+
 
 ### The module itself
 
@@ -155,21 +174,21 @@ feeding loop.
 
 ### With Vite
 
-Vite can bundle the worker and the worklet straight from the package, emitting
-`chordino.wasm` as a hashed asset, so nothing needs copying:
+Vite can bundle the workers and the worklet straight from the package,
+emitting `chordino.wasm` as a hashed asset, so nothing needs copying:
 
 ```ts
+import ChordLiveWorker from 'chordino.js/chord-live-worker.mjs?worker';
 import ChordWorker from 'chordino.js/chord-worker.mjs?worker';
 import processorUrl from 'chordino.js/chord-processor.mjs?worker&url';
-import wasmUrl from 'chordino.js/chordino.wasm?url';
 
 const worker = new ChordWorker(); // in place of new Worker(new URL('chord-worker.mjs', lib), ...)
+const liveWorker = new ChordLiveWorker(); // in place of new Worker(new URL('chord-live-worker.mjs', lib), ...)
 await context.audioWorklet.addModule(processorUrl);
-const wasmBinary = await (await fetch(wasmUrl)).arrayBuffer();
 ```
 
-Set `worker: { format: 'es' }` in `vite.config.ts`: with the default, `iife`,
-the worklet fails with `self is not defined`.
+The examples set `worker: { format: 'es' }` in `vite.config.ts`, which keeps
+the bundled workers ES modules like the files in the package.
 [examples/vite-react](examples/vite-react) is a React app built this way, with
 a hook for each.
 
@@ -182,7 +201,8 @@ a hook for each.
 - `player/`: plays a recording and shows, frame by frame, the chroma, chord
   salience and semitone spectrum Chordino works from, next to the chords it
   finds.
-- `realtime/`: the same from the microphone, through the production worklet.
+- `realtime/`: the same from the microphone, through the production worklet
+  and worker.
 
 Build first, then serve the directory and open one of them:
 
@@ -190,8 +210,8 @@ Build first, then serve the directory and open one of them:
 python3 -m http.server -d examples
 ```
 
-- `vite-react/`: a React and Vite app with a hook for the worker and one for the
-  worklet. It runs on its own; [its README](examples/vite-react/README.md) has
+- `vite-react/`: a React and Vite app with a hook for whole recordings and one
+  for live input. It runs on its own; [its README](examples/vite-react/README.md) has
   the steps.
 
 ## Building and testing
@@ -215,7 +235,7 @@ npm test
 | `src/nnls-chroma/` | The NNLS Chroma / Chordino plugin source, adapted for this build |
 | `src/chordextract.cpp`, `src/session.h` | The bindings `chordino.mjs` exposes |
 | `src/inspect.cpp` | Extra bindings of the inspect build |
-| `src/js/` | The worker and the worklet, in TypeScript |
+| `src/js/` | The workers and the worklet, in TypeScript |
 | `src/build.sh` | The `emcc` commands |
 | `examples/` | The example pages |
 | `test/` | Tests, run with `node --test` against `build/` |

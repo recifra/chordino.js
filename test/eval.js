@@ -8,18 +8,18 @@
 // which also reports how often the confidence gate rejected a frame.
 //
 // --realtime streams the recording through the AudioWorklet (chord-processor.mjs)
-// in render quanta, the way the microphone would feed it, and scores the chords
-// it posts twice: each from the time it reports for it (what it decided), and
-// each from the moment it is posted (what is on screen, late by however long the
-// worklet takes to make up its mind). Both are also compared with the offline
-// extraction of the same audio, and it reports how long the audio thread spends
-// in process().
+// in render quanta, the way the microphone would feed it, into the worker that
+// decodes it (chord-live-worker.mjs), and scores the chords posted twice: each
+// from the time it reports for it (what it decided), and each from the moment it
+// is posted (what is on screen, late by however long the worker takes to make up
+// its mind). Both are also compared with the offline extraction of the same
+// audio, and it reports how long the worker spends on each buffer.
 
 import { readFileSync } from 'node:fs';
 
 import { chordKey, compare, parseExpected } from '../examples/player/chords.js';
 import {
-  analyzeChords, decodeMp3, detectChords, loadChordino, loadProcessor, loadScript, paths, RENDER_QUANTUM,
+  analyzeChords, decodeMp3, detectChords, loadChordino, loadLive, loadScript, paths, RENDER_QUANTUM,
 } from './helpers.js';
 
 // A detected change counts for an expected one when it lands in this window
@@ -76,7 +76,7 @@ if (realtime) {
   console.log();
   costs.sort((a, b) => a - b);
   const total = costs.reduce((sum, cost) => sum + cost, 0);
-  console.log(`process()      max ${costs.at(-1).toFixed(1)}ms  p99.9 ${costs[Math.floor(0.999 * (costs.length - 1))].toFixed(1)}ms  ` +
+  console.log(`per buffer     max ${costs.at(-1).toFixed(1)}ms  p99.9 ${costs[Math.floor(0.999 * (costs.length - 1))].toFixed(1)}ms  ` +
     `total ${time(total / 1000)} (${percent(total / 1000 / duration)} of the audio)`);
 } else {
   score(extracted);
@@ -89,22 +89,26 @@ if (analysis?.gate) {
   console.log(`gate           ${counts.map((count, reason) => `${GATE_REASONS[reason]} ${percent(count / analysis.gate.length)}`).join(', ')}`);
 }
 
-/** Feeds the recording to a chord-processor and collects what it posts, and when. */
+/** Feeds the recording to a chord-processor and its worker and collects what it posts, and when. */
 async function streamRealtime() {
-  const { registered, clock, wasmBinary } = await loadProcessor(paths.processor, sampleRate);
-  const processor = new registered['chord-processor']({ processorOptions: { wasmBinary } });
-  await processor.ready;
-  const { messages } = processor.port;
+  const { clock, worker, start } = await loadLive(sampleRate);
+  const { processor, port } = await start();
+  const { messages } = worker;
   messages.length = 0;
   const posted = [];
   const costs = [];
+  // The worker's handler for the buffers the worklet sends, timed
+  const handler = port.onmessage;
+  port.onmessage = (event) => {
+    const before = performance.now();
+    handler(event);
+    costs.push(performance.now() - before);
+  };
   const quantum = new Float32Array(RENDER_QUANTUM);
   for (let offset = 0; offset < samples.length; offset += RENDER_QUANTUM) {
     quantum.fill(0);
     quantum.set(samples.subarray(offset, offset + RENDER_QUANTUM));
-    const before = performance.now();
     processor.process([[quantum]], [], {});
-    costs.push(performance.now() - before);
     clock.currentTime += RENDER_QUANTUM / sampleRate;
     for (const message of messages.splice(0)) {
       if (message.type === 'chordResult') {

@@ -1,17 +1,18 @@
-// Listens to the microphone the way an app does, through chord-processor.mjs (the
-// production worklet), and lays the chords it posts over the bins the inspect
-// build works out from the same audio in inspect-worker.js. Like the player,
+// Listens to the microphone the way an app does, through chord-processor.mjs and
+// chord-live-worker.mjs (the production worklet and worker), and lays the chords
+// they post over the bins the inspect build works out from the same audio in
+// inspect-worker.js. Like the player,
 // every panel scrolls under the clock, but here the newest audio is at the right
 // edge. Left of the read line, delayMs behind the newest frame, frames are
-// settled: they show the values the worklet's decision there was made on. Right
+// settled: they show the values the worker's decision there was made on. Right
 // of it they still move with every buffer, and the chords there are the Viterbi
 // path as it stands, not yet posted.
 
 import { chordKey } from '../player/chords.js';
 import { buildExport } from '../player/export.js';
 
-// Where chord-processor.mjs, chordino.mjs and chordino.wasm live; an app may
-// serve them from a CDN, which addModule and fetch allow with CORS
+// Where chord-processor.mjs, chord-live-worker.mjs, chordino.mjs and
+// chordino.wasm live
 const LIB = new URL('../lib/', location.href);
 // Chordino's step size: frames come sampleRate / STEP times a second
 const STEP = 2048;
@@ -75,7 +76,6 @@ const exportStep = $('export-step');
 const LUT = buildLut([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]);
 
 let session = null;
-let wasmBinary = null;
 // What inspect-worker.js announces: labels, templates, chromaNames, semitoneNames
 let names = null;
 let frameRate = 0;
@@ -117,30 +117,33 @@ async function start() {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
     context = new AudioContext();
     const source = context.createMediaStreamSource(stream);
-    // Worklets cannot fetch, so the processor gets the wasm bytes from here
-    wasmBinary ??= await (await fetch(new URL('chordino.wasm', LIB))).arrayBuffer();
     await context.audioWorklet.addModule(new URL('chord-processor.mjs', LIB));
     await context.audioWorklet.addModule('./tap-processor.js');
 
     const delayMs = Number(delaySelect.value);
     const mono = { channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'discrete' };
-    const chordNode = new AudioWorkletNode(context, 'chord-processor', { ...mono, processorOptions: { wasmBinary, delayMs } });
+    const chordNode = new AudioWorkletNode(context, 'chord-processor', mono);
     const tapNode = new AudioWorkletNode(context, 'tap-processor', mono);
+    // It loads chordino.wasm from next to chordino.mjs
+    const chordWorker = new Worker(new URL('chord-live-worker.mjs', LIB), { type: 'module' });
     const worker = new Worker('./inspect-worker.js');
 
     clearData();
     frameRate = context.sampleRate / STEP;
     startedAt = context.currentTime;
     stoppedAt = null;
-    session = { stream, context, chordNode, tapNode, worker };
-    chordNode.port.onmessage = ({ data }) => onChordMessage(data, context);
+    session = { stream, context, chordNode, chordWorker, tapNode, worker };
+    chordWorker.onmessage = ({ data }) => onChordMessage(data, context);
     worker.onmessage = ({ data }) => onWorkerMessage(data);
     worker.onerror = (event) => {
       event.preventDefault();
       setStatus(`Inspect worker failed: ${event.message || 'could not run inspect-worker.js'}`);
     };
 
-    // The audio goes from the tap straight to the worker, not through this thread
+    // The audio goes from each worklet straight to its worker, not through this thread
+    const chordChannel = new MessageChannel();
+    chordWorker.postMessage({ type: 'start', sampleRate: context.sampleRate, delayMs, port: chordChannel.port1 }, [chordChannel.port1]);
+    chordNode.port.postMessage({ type: 'port', port: chordChannel.port2 }, [chordChannel.port2]);
     const channel = new MessageChannel();
     worker.postMessage({ type: 'start', sampleRate: context.sampleRate, delayMs, port: channel.port1 }, [channel.port1]);
     tapNode.port.postMessage({ type: 'port', port: channel.port2 }, [channel.port2]);
@@ -168,13 +171,10 @@ async function stop() {
   listenButton.disabled = true;
   current.stream.getTracks().forEach((track) => track.stop());
   current.tapNode.port.postMessage({ type: 'stop' });
+  current.chordNode.port.postMessage({ type: 'stop' });
   current.worker.terminate();
-  // Let the worklet release its plugin before the context goes
-  await new Promise((resolve) => {
-    current.chordNode.port.onmessage = ({ data }) => data.type === 'stopped' && resolve();
-    current.chordNode.port.postMessage({ type: 'stop' });
-    setTimeout(resolve, 1000);
-  });
+  // The plugin goes with the worker
+  current.chordWorker.terminate();
   await current.context.close();
   listenButton.textContent = 'Start listening';
   listenButton.disabled = false;
@@ -260,7 +260,7 @@ function buildView() {
     .map((segment) => ({ ...segment, start: segment.start - origin, end: segment.end - origin }))
     .filter((segment) => segment.end > 0)
     .map((segment) => ({ ...segment, start: Math.max(segment.start, 0), end: Math.min(segment.end, duration) }));
-  // The worklet and the inspect worker started on different buffers, so their
+  // The production and the inspect worker started on different buffers, so their
   // frames can be a few milliseconds apart
   if ((segments[0]?.start ?? duration) > 0.5 / frameRate) {
     segments.unshift({ chord: 'N', start: 0, end: segments[0]?.start ?? duration });
@@ -407,7 +407,7 @@ function buildLut(stops) {
 function createLane() {
   const section = document.createElement('section');
   section.className = 'panel';
-  section.innerHTML = '<h2>Chords <small>posted by chord-processor.mjs, from the time each reports; ' +
+  section.innerHTML = '<h2>Chords <small>posted by chord-live-worker.mjs, from the time each reports; ' +
     'faded, right of the read line: the Viterbi path there now, not posted yet; ' +
     'ticks on top: frames the confidence gate rejected (gray: chord too close to N, purple: another root too close)</small></h2>';
   const canvas = document.createElement('canvas');
@@ -666,7 +666,7 @@ function drawPanel(panel, time, frames) {
   drawReadLine(context, area, x);
 }
 
-/** The read point: what the worklet posts is read here, delayMs behind the newest frame. */
+/** The read point: what the production worker posts is read here, delayMs behind the newest frame. */
 function drawReadLine(context, area, x) {
   if (readAt === null || x(readAt) < GUTTER) {
     return;

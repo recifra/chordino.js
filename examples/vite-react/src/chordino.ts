@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-// Vite bundles the worker and the worklet, each with chordino.mjs, and emits
-// chordino.wasm once as an asset both of them use
+// Vite bundles each worker with chordino.mjs and emits chordino.wasm once as an
+// asset both of them load; the worklet only hands the audio on, so it has none
+import ChordLiveWorker from 'chordino.js/chord-live-worker.mjs?worker';
 import ChordWorker from 'chordino.js/chord-worker.mjs?worker';
 import processorUrl from 'chordino.js/chord-processor.mjs?worker&url';
-import wasmUrl from 'chordino.js/chordino.wasm?url';
 
 /** [chord, seconds] marks; '' is no chord, and the last one is ['', duration] */
 export type Timestamps = [chord: string, seconds: number][];
@@ -13,7 +13,7 @@ type WorkerMessage =
   | { type: 'done'; result: { timestamps: Timestamps } }
   | { type: 'error'; message: string };
 
-type ProcessorMessage =
+type LiveWorkerMessage =
   | { type: 'ready' }
   | { type: 'chordResult'; result: { chord: string; time: number } }
   | { type: 'error'; message: string }
@@ -95,12 +95,14 @@ interface Session {
   stream: MediaStream;
   context: AudioContext;
   node: AudioWorkletNode;
+  worker: Worker;
 }
 
 /**
- * Detects chords live from the microphone in an AudioWorklet. delayMs trades
- * latency for agreement with useChordDetection (see the chordino.js README).
- * Call start from a click or the like, so the AudioContext is allowed to run.
+ * Detects chords live from the microphone: an AudioWorklet hands the audio to a
+ * Web Worker, which runs Chordino. delayMs trades latency for agreement with
+ * useChordDetection (see the chordino.js README). Call start from a click or
+ * the like, so the AudioContext is allowed to run.
  */
 export function useLiveChords(delayMs = 1000) {
   const [state, setState] = useState<LiveState>({ status: 'idle' });
@@ -113,11 +115,9 @@ export function useLiveChords(delayMs = 1000) {
       return;
     }
     session.stream.getTracks().forEach((track) => track.stop());
-    // Let the worklet free its memory before the context goes
-    await new Promise<void>((resolve) => {
-      session.node.port.onmessage = ({ data }: MessageEvent<ProcessorMessage>) => data.type === 'stopped' && resolve();
-      session.node.port.postMessage({ type: 'stop' });
-    });
+    session.node.port.postMessage({ type: 'stop' });
+    // The plugin goes with the worker
+    session.worker.terminate();
     await session.context.close();
   }, []);
 
@@ -128,21 +128,18 @@ export function useLiveChords(delayMs = 1000) {
     setState({ status: 'starting' });
     let stream: MediaStream | undefined;
     let context: AudioContext | undefined;
+    let worker: Worker | undefined;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
       context = new AudioContext();
-      // Worklets cannot fetch, so the processor gets the wasm bytes from here
-      const [wasmBinary] = await Promise.all([
-        fetch(wasmUrl).then((response) => response.arrayBuffer()),
-        context.audioWorklet.addModule(processorUrl),
-      ]);
+      worker = new ChordLiveWorker();
+      await context.audioWorklet.addModule(processorUrl);
       const node = new AudioWorkletNode(context, 'chord-processor', {
         channelCount: 1,
         channelCountMode: 'explicit',
         channelInterpretation: 'discrete',
-        processorOptions: { wasmBinary, delayMs },
       });
-      node.port.onmessage = ({ data }: MessageEvent<ProcessorMessage>) => {
+      worker.onmessage = ({ data }: MessageEvent<LiveWorkerMessage>) => {
         if (data.type === 'ready') {
           setState({ status: 'listening', chord: null });
         } else if (data.type === 'chordResult') {
@@ -152,11 +149,16 @@ export function useLiveChords(delayMs = 1000) {
           void stop();
         }
       };
+      // The audio goes from the worklet straight to the worker
+      const { port1, port2 } = new MessageChannel();
+      worker.postMessage({ type: 'start', sampleRate: context.sampleRate, delayMs, port: port1 }, [port1]);
+      node.port.postMessage({ type: 'port', port: port2 }, [port2]);
       context.createMediaStreamSource(stream).connect(node);
       node.connect(context.destination); // it outputs silence
-      sessionRef.current = { stream, context, node };
+      sessionRef.current = { stream, context, node, worker };
     } catch (err) {
       stream?.getTracks().forEach((track) => track.stop());
+      worker?.terminate();
       void context?.close();
       setState({ status: 'error', message: (err as Error).message });
     }

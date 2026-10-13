@@ -14,6 +14,7 @@ export const paths = {
   chordino: path.join(root, 'build/chordino.mjs'),
   wasm: path.join(root, 'build/chordino.wasm'),
   processor: path.join(root, 'build/chord-processor.mjs'),
+  liveWorker: path.join(root, 'build/chord-live-worker.mjs'),
   worker: path.join(root, 'build/chord-worker.mjs'),
   inspect: path.join(root, 'build/inspect/chordino-inspect.js'),
   chordsMp3: path.join(root, 'test/fixtures/chords.mp3'),
@@ -162,11 +163,70 @@ class FakePort {
 }
 
 /**
+ * One end of a MessageChannel that delivers at once, as if the other side were
+ * idle. Like a real port, it queues what arrives before it has an onmessage.
+ * `hold()` keeps what arrives until `flush()`, for a side that falls behind.
+ */
+class ChannelPort {
+  other = null;
+  closed = false;
+  queue = [];
+  holding = false;
+  #onmessage = null;
+
+  get onmessage() {
+    return this.#onmessage;
+  }
+
+  set onmessage(handler) {
+    this.#onmessage = handler;
+    this.deliver();
+  }
+
+  postMessage(data) {
+    if (!this.closed && !this.other.closed) {
+      this.other.queue.push(data);
+      this.other.deliver();
+    }
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  hold() {
+    this.holding = true;
+  }
+
+  /** Delivers what was held, and whatever that brings in reply is held again. */
+  flush() {
+    const held = this.queue.splice(0);
+    for (const data of held) {
+      this.#onmessage?.({ data });
+    }
+    return held.length;
+  }
+
+  deliver() {
+    while (!this.holding && this.#onmessage && this.queue.length > 0) {
+      this.#onmessage({ data: this.queue.shift() });
+    }
+  }
+}
+
+export function messageChannel() {
+  const port1 = new ChannelPort();
+  const port2 = new ChannelPort();
+  port1.other = port2;
+  port2.other = port1;
+  return { port1, port2 };
+}
+
+/**
  * Loads the realtime worklet module with the AudioWorkletGlobalScope globals it
- * expects, and returns the registered processor class, the clock behind
- * `currentTime` and the wasm bytes a page hands it in processorOptions. The
- * globals are installed on globalThis, which is fine because node --test runs
- * every test file in its own process.
+ * expects, and returns the registered processor class and the clock behind
+ * `currentTime`. The globals are installed on globalThis, which is fine because
+ * node --test runs every test file in its own process.
  */
 export async function loadProcessor(file, sampleRate) {
   const clock = { currentTime: 0 };
@@ -185,7 +245,27 @@ export async function loadProcessor(file, sampleRate) {
   });
   Object.defineProperty(globalThis, 'currentTime', { get: () => clock.currentTime, configurable: true });
   await import(pathToFileURL(file).href);
-  return { registered, clock, wasmBinary: readFileSync(paths.wasm) };
+  return { registered, clock };
+}
+
+/**
+ * Loads the live pair, chord-processor.mjs and chord-live-worker.mjs, each with
+ * the globals it expects (see loadProcessor and loadWorker). `start` connects a
+ * new processor to the worker the way a page does, and resolves once the worker
+ * has handled the start; it hands back the worker's end of the channel too.
+ */
+export async function loadLive(sampleRate) {
+  const { registered, clock } = await loadProcessor(paths.processor, sampleRate);
+  const worker = await loadWorker(paths.liveWorker);
+  const ChordProcessor = registered['chord-processor'];
+  async function start(options = {}) {
+    const processor = new ChordProcessor();
+    const { port1, port2 } = messageChannel();
+    processor.port.send({ type: 'port', port: port2 });
+    await worker.send({ type: 'start', sampleRate, port: port1, ...options });
+    return { processor, port: port1 };
+  }
+  return { clock, worker, ChordProcessor, start };
 }
 
 /**

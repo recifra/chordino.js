@@ -16,7 +16,7 @@
   <header>
     <h1>Chordino Realtime</h1>
     <button id="listen">Start listening</button>
-    <span id="status">Listens to the microphone through chord-processor.mjs, as an app would, and shows what it posts next to the bins behind it.</span>
+    <span id="status">Listens to the microphone through chord-processor.mjs and chord-live-worker.mjs, as an app would, and shows what it posts next to the bins behind it.</span>
     <span class="export">
       <button id="export" disabled title="Posted chords, chord probabilities and chroma of the last 10 minutes, laid out for an AI to analyze">Export for AI</button>
       <select id="export-step" title="Timeline window">
@@ -36,7 +36,7 @@
         <option value="40">40 s</option>
       </select>
     </label>
-    <label title="processorOptions.delayMs: how far behind the newest audio the chord posted is read">Delay
+    <label title="delayMs: how far behind the newest audio the chord posted is read">Delay
       <select id="delay">
         <option value="0">0 ms</option>
         <option value="500">500 ms</option>
