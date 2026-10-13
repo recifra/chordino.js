@@ -2,15 +2,14 @@
 #define CHORDINO_SESSION_H
 
 #include "nnls-chroma/Chordino.h"
-#include "kissfft/kiss_fftr.h"
 #include "realtime.h"
-#include "window.h"
+#include "spectrum.h"
 
 // What initializePlugin hands to JS as the instance: a Chordino and what feeds
 // it. It does what the Vamp host SDK's PluginBufferingAdapter and
 // PluginInputDomainAdapter did here, for one channel and the one plugin, with
-// the same results: audio comes in blocks of any size, Chordino gets Hann
-// windowed spectra of blockSize samples every stepSize samples.
+// the same results: audio comes in blocks of any size, Chordino gets the
+// spectrum (spectrum.c) of blockSize samples every stepSize samples.
 struct Session {
     Chordino *chordino;
     float sampleRate;
@@ -24,11 +23,7 @@ struct Session {
     bool fed;
     float *shifted;         // not realtime: see analyse in session.cpp
     int analysed;           // blocks analysed since the start or the last reset
-    window_t *window;       // Hann
-    double *windowed;
-    kiss_fftr_cfg fft;
-    kiss_fft_cpx *spectrum;
-    float *bins;            // the spectrum as Chordino takes it: re, im, re, ...
+    spectrum_t *spectrum;
 };
 
 // Null when Chordino does not initialise

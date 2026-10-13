@@ -24,11 +24,7 @@ Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime) {
     session->blockSize = blockSize;
     session->pending = new float[blockSize + inputBlockSize];
     session->shifted = new float[blockSize + blockSize / 2];
-    session->window = window_create_hann(blockSize);
-    session->windowed = new double[blockSize];
-    session->fft = kiss_fftr_alloc(blockSize, 0, nullptr, nullptr);
-    session->spectrum = new kiss_fft_cpx[blockSize / 2 + 1];
-    session->bins = new float[blockSize + 2];
+    session->spectrum = spectrum_create(blockSize);
     sessionReset(session);
     return session;
 }
@@ -37,11 +33,7 @@ void sessionRelease(Session *session) {
     delete session->chordino;
     delete[] session->pending;
     delete[] session->shifted;
-    window_destroy(session->window);
-    delete[] session->windowed;
-    kiss_fftr_free(session->fft);
-    delete[] session->spectrum;
-    delete[] session->bins;
+    spectrum_destroy(session->spectrum);
     delete session;
 }
 
@@ -89,20 +81,8 @@ void analyse(Session *session, const float *block, realtime_t timestamp) {
     }
     session->analysed++;
 
-    double *windowed = session->windowed;
-    window_cut(session->window, input, windowed);
-    // Centred on the start of the FFT, so the phases are those of the middle
-    for (int i = 0; i < half; ++i) {
-        double value = windowed[i];
-        windowed[i] = windowed[i + half];
-        windowed[i + half] = value;
-    }
-    kiss_fftr(session->fft, windowed, session->spectrum);
-    for (int i = 0; i <= half; ++i) {
-        session->bins[i * 2] = float(session->spectrum[i].r);
-        session->bins[i * 2 + 1] = float(session->spectrum[i].i);
-    }
-    session->chordino->process(&session->bins, Vamp::RealTime(timestamp.sec, timestamp.nsec));
+    const float *bins = spectrum_compute(session->spectrum, input);
+    session->chordino->process(&bins, Vamp::RealTime(timestamp.sec, timestamp.nsec));
 }
 
 // Analyses the block at the start of pending and steps past stepSize samples of it

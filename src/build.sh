@@ -11,11 +11,11 @@ cd "$(dirname "$0")"
 
 OUT=../build
 SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/NNLSBase.cpp nnls-chroma/chromamethods.cpp
-    nnls-chroma/viterbi.cpp nnls-chroma/nnls.c session.cpp window.c kissfft.c
-    realtime.c vamp-realtime.cpp chordextract.cpp"
-# No Vamp SDK source, only its plugin headers: session.cpp does what its host
-# adapters did, window.c what its Window did and realtime.c what its RealTime
-# did. The FFT in double
+    nnls-chroma/viterbi.cpp nnls-chroma/nnls.c session.cpp spectrum.c window.c
+    kissfft.c realtime.c vamp-realtime.cpp chordextract.cpp"
+# No Vamp SDK source, only its plugin headers: session.cpp and spectrum.c do
+# what its host adapters did, window.c what its Window did and realtime.c what
+# its RealTime did. The FFT in double
 # precision, as the Vamp SDK ran it, in every file that includes kissfft.
 FLAGS="-I$VAMP_PATH -Dkiss_fft_scalar=double"
 mkdir -p "$OUT/inspect"
