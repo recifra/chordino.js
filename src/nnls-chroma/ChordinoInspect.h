@@ -21,8 +21,7 @@
 // Called once per getRemainingFeatures(), before the first frame.
 void chordinoInspectBegin(const std::vector<std::string> &chordNames);
 
-// Called for every frame, in order. Time is in seconds rather than a RealTime,
-// which lives in a different namespace on the plugin and the host side.
+// Called for every frame, in order. Time is in seconds rather than a RealTime.
 //  chroma:         24 bins, bass (0-11) stacked under treble (12-23), A-based
 //  smoothedChroma: the 24 bins the chord matcher actually scores
 //  salience:       one value per chord in chordNames, after the confidence gate

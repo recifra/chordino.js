@@ -4,8 +4,6 @@
 // still provides initializePlugin, processBuffer and releasePlugin; this file
 // only adds getAnalysis and getPartialAnalysis.
 
-#include "vamp-hostsdk/PluginBufferingAdapter.h"
-
 #include "nnls-chroma/ChordinoInspect.h"
 #include "session.h"
 
@@ -16,7 +14,6 @@
 
 using namespace std;
 using namespace Vamp;
-using namespace Vamp::HostExt;
 
 namespace {
 
@@ -181,11 +178,11 @@ emscripten::val analysisResult(Plugin::FeatureSet &fs, int chordFeatureNo) {
 }
 
 emscripten::val getAnalysis(uintptr_t lpSession) {
-    auto *adapter = reinterpret_cast<Session*>(lpSession)->adapter;
-    int chordFeatureNo = chordOutput(adapter);
+    auto *session = reinterpret_cast<Session*>(lpSession);
+    int chordFeatureNo = chordOutput(session->chordino);
     collected = Collected();
     // Chordino does all its work here, calling the hooks once per frame
-    Plugin::FeatureSet fs = adapter->getRemainingFeatures();
+    Plugin::FeatureSet fs = sessionFinish(session);
     return analysisResult(fs, chordFeatureNo);
 }
 

@@ -22,8 +22,8 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 122 KB (56 KB gzipped) | Chordino and the Vamp host SDK |
-| `chordino.mjs` | 7 KB | ES module that loads the wasm; default export `createChordino()` |
+| `chordino.wasm` | 99 KB (48 KB gzipped) | Chordino, with KISS FFT |
+| `chordino.mjs` | 6 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |
 | `chord-processor.mjs` | 1 KB | AudioWorklet processor that hands live input to it |
@@ -233,8 +233,10 @@ npm test
 | Path | What it holds |
 | --- | --- |
 | `src/nnls-chroma/` | The NNLS Chroma / Chordino plugin source, adapted for this build |
-| `src/chordextract.cpp`, `src/session.h` | The C functions `chordino.mjs` calls |
+| `src/chordextract.cpp` | The C functions `chordino.mjs` calls |
 | `src/chordextract.js` | The API `chordino.mjs` exposes over them |
+| `src/session.cpp`, `src/session.h` | What feeds Chordino: buffering, Hann window and FFT |
+| `src/kissfft/` | KISS FFT 131.2.0 |
 | `src/inspect.cpp` | Extra bindings of the inspect build |
 | `src/js/` | The workers and the worklet, in TypeScript |
 | `src/build.sh` | The `emcc` commands |
@@ -249,6 +251,8 @@ version 2 or later (see [src/nnls-chroma/COPYING](src/nnls-chroma/COPYING)). The
 modules in `build/` are compiled from that code, so chordino.js is distributed
 under the same license (see [LICENSE](LICENSE)). The Vamp plugin SDK is by
 Chris Cannam and Queen Mary University of London, under a BSD-style license.
+KISS FFT is by Mark Borgerding, under the BSD 3-clause license (see
+[src/kissfft/COPYING](src/kissfft/COPYING), which the package includes).
 
 If you use Chordino in research, please cite:
 

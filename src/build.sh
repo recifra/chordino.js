@@ -10,8 +10,12 @@ cd "$(dirname "$0")"
 
 OUT=../build
 SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/NNLSBase.cpp nnls-chroma/chromamethods.cpp
-    nnls-chroma/viterbi.cpp nnls-chroma/nnls.c chordextract.cpp"
-VAMP="$VAMP_PATH/src/vamp-hostsdk/*.c $VAMP_PATH/src/vamp-hostsdk/*.cpp $VAMP_PATH/src/vamp-sdk/RealTime.cpp"
+    nnls-chroma/viterbi.cpp nnls-chroma/nnls.c session.cpp kissfft.c chordextract.cpp"
+# Only RealTime of the Vamp SDK: session.cpp does what its host adapters did
+VAMP="$VAMP_PATH/src/vamp-sdk/RealTime.cpp"
+# The FFT in double precision, as the Vamp SDK ran it, in every file that
+# includes kissfft
+FFT="-Dkiss_fft_scalar=double"
 mkdir -p "$OUT/inspect"
 
 # One ES module plus one .wasm, so an app shipping both the worker and the
@@ -20,7 +24,7 @@ mkdir -p "$OUT/inspect"
 # 7 KB; EXPORT_KEEPALIVE=0 leaves the C functions it wraps off Module.
 # noiostream.h keeps libc++'s streams out of the wasm (273 KB -> 127 KB);
 # -Oz would save 48 KB more but doubles decode time.
-emcc -O3 --closure 1 -flto \
+emcc -O3 --closure 1 -flto $FFT \
     -include noiostream.h \
     --post-js chordextract.js \
     -s FILESYSTEM=0 \
@@ -36,7 +40,7 @@ chmod 644 "$OUT/chordino.wasm"
 # Separate single-file bundle with the CHORDINO_INSPECT hooks and getAnalysis,
 # so the production module keeps its size and API. inspect.cpp still binds
 # getAnalysis with embind.
-emcc --bind -O3 \
+emcc --bind -O3 $FFT \
     -DCHORDINO_INSPECT \
     --post-js chordextract.js \
     -s WASM=1 \

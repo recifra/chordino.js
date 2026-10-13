@@ -1,7 +1,3 @@
-#include "vamp-hostsdk/PluginInputDomainAdapter.h"
-#include "vamp-hostsdk/PluginBufferingAdapter.h"
-
-#include "nnls-chroma/Chordino.h"
 #include "session.h"
 
 #include <emscripten/emscripten.h>
@@ -9,7 +5,6 @@
 
 using namespace std;
 using namespace Vamp;
-using namespace Vamp::HostExt;
 
 // The functions exported here are plain C ones; src/chordextract.js wraps them
 // in the API src/js/chordino.d.mts describes, without embind and its runtime.
@@ -50,44 +45,30 @@ void setProgressReports(bool enabled) {
     chordinoProgress = enabled ? &forwardProgress : nullptr;
 }
 
-// The input-domain adapter centres every frame on its timestamp. ShiftData does
-// that by delaying the audio half a block, so the first frame is centred on 0 and
-// the chords start at 0, as the offline extraction reports them; but then a frame
-// only comes out half a block (186 ms at 44.1 kHz) after the end of its window.
-// With realtime set, ShiftTimestamp analyses each block as it comes and moves its
-// timestamp to its centre instead: the same frames minus the first few, each out
-// half a block sooner, which is what the realtime worklet wants.
+// Every frame is centred on its timestamp. Offline, that is done by delaying the
+// audio half a block, so the first frame is centred on 0 and the chords start at
+// 0, as the offline extraction reports them; but then a frame only comes out half
+// a block (186 ms at 44.1 kHz) after the end of its window. With realtime set,
+// each block is analysed as it comes and its timestamp moved to its centre
+// instead: the same frames minus the first few, each out half a block sooner,
+// which is what the realtime worklet wants.
 extern "C" EMSCRIPTEN_KEEPALIVE
 Session *initializePlugin(
     float samplerate,
     size_t blocksize,
     bool realtime
 ) {
-    auto *chordino = new Chordino(samplerate);
-    auto *ia = new PluginInputDomainAdapter(chordino);
-    ia->setProcessTimestampMethod(realtime
-        ? PluginInputDomainAdapter::ShiftTimestamp
-        : PluginInputDomainAdapter::ShiftData);
-    auto *adapter = new PluginBufferingAdapter(ia);
-
-    // Plugin requires 1 channel (we will mix after)
-    if (!adapter->initialise(1, blocksize, blocksize)) {
-        delete adapter;
-        return nullptr;
-    }
-    return new Session{chordino, adapter};
+    return sessionCreate(samplerate, int(blocksize), realtime);
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE
 void releasePlugin(Session *session) {
-    // The adapters own the plugin they wrap
-    delete session->adapter;
-    delete session;
+    sessionRelease(session);
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE
 void resetProcess(Session *session) {
-    session->adapter->reset();
+    sessionReset(session);
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE
@@ -96,10 +77,7 @@ void processBuffer(
     float *buffer,
     long milliseconds
 ) {
-    RealTime timestamp = RealTime::fromMilliseconds((int) milliseconds);
-
-    // feed to plugin: can just take address of buffer, as only one channel
-    session->adapter->process(&buffer, timestamp);
+    sessionProcess(session, buffer, RealTime::fromMilliseconds((int) milliseconds));
 }
 
 namespace {
@@ -132,25 +110,24 @@ void pushChords(Plugin::FeatureSet &fs, int chordFeatureNo) {
 
 }
 
-// Chords of everything fed, once all of it has been: the last few samples the
-// adapter is still holding are padded with zeros to make up a whole frame.
+// Chords of everything fed, once all of it has been: the last few samples still
+// pending are padded with zeros to make up a whole frame.
 extern "C" EMSCRIPTEN_KEEPALIVE
 void getResult(Session *session) {
-    auto *adapter = session->adapter;
-    int chordFeatureNo = chordOutput(adapter);
+    int chordFeatureNo = chordOutput(session->chordino);
     if (chordFeatureNo < 0)
     {
         return;
     }
     // features at end of processing (actually Chordino does all its work here)
-    Plugin::FeatureSet fs = adapter->getRemainingFeatures();
+    Plugin::FeatureSet fs = sessionFinish(session);
     pushChords(fs, chordFeatureNo);
 }
 
 // Chords of the frames analysed so far, for a caller that goes on feeding audio
 // afterwards (the realtime worklet). It asks Chordino directly, which can decode
-// its frames any number of times. Going through the adapter like getResult does
-// would pad its buffered samples with zeros, and the audio fed next would then
+// its frames any number of times. Finishing the session like getResult does
+// would pad its pending samples with zeros, and the audio fed next would then
 // follow those zeros: a gap in the signal on every read.
 extern "C" EMSCRIPTEN_KEEPALIVE
 void getPartialResult(Session *session) {
