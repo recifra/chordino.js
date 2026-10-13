@@ -28,7 +28,7 @@
 
 #include "../chordino.h"
 
-#include "ChordinoInspect.h"
+#include "chordino_inspect.h"
 #include "chromamethods.h"
 #include "viterbi.h"
 
@@ -451,7 +451,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 #ifdef CHORDINO_INSPECT
     bool clipwarned = false;
     float *inspectSemitones = calloc((nFresh > 0 ? nFresh : 1) * 84, sizeof(float));
-    chordinoInspectBegin(nChord, c->dictionary->names);
+    chordino_inspect_begin(nChord, c->dictionary->names);
 #endif
 
     for (int iFresh = 0; iFresh < nFresh; ++iFresh) {
@@ -644,10 +644,10 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         else if (!confident) gate = 2;
         // Only frames this call ran NNLS on have their chroma and semitones here
         bool fresh = iFrame >= nCached;
-        chordinoInspectFrame(realtime_to_seconds(timestamps[iFrame]),
-                             fresh ? c->rawChromas + iFrame * 24 : NULL,
-                             smoothedChroma, currentChordSalience,
-                             fresh ? inspectSemitones + (iFrame - nCached) * 84 : NULL, gate);
+        chordino_inspect_frame(realtime_to_seconds(timestamps[iFrame]),
+                               fresh ? c->rawChromas + iFrame * 24 : NULL,
+                               smoothedChroma, currentChordSalience,
+                               fresh ? inspectSemitones + (iFrame - nCached) * 84 : NULL, gate);
 #endif
         report(progress, progressChroma, progressSalience, iFrame + 1, nFrame);
     }

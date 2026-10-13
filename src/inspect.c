@@ -4,7 +4,7 @@
 // still provides initializePlugin, processBuffer and releasePlugin; this file
 // only adds getAnalysis and getPartialAnalysis, which src/inspect.js wraps.
 
-#include "nnls-chroma/ChordinoInspect.h"
+#include "nnls-chroma/chordino_inspect.h"
 #include "session.h"
 
 #include <emscripten/emscripten.h>
@@ -72,7 +72,7 @@ static void forgetCollected(void) {
 }
 
 // Chordino hands over a frame's chroma and semitones only the first time it
-// decodes it (see rawChromas in Chordino.c), so while getPartialAnalysis is in use
+// decodes it (see rawChromas in chordino.c), so while getPartialAnalysis is in use
 // they are kept here, by frame time, for the calls after that: in order of time,
 // one entry per time.
 typedef struct {
@@ -114,18 +114,18 @@ static void remember(double time, const float *chroma, const float *semitones) {
 static bool partial = false;
 static double collectAfter = 0;
 
-void chordinoInspectBegin(int nChord, char *const *chordNames) {
+void chordino_inspect_begin(int nChord, char *const *chordNames) {
     forgetCollected();
     collected.nChord = nChord;
     collected.chordNames = chordNames;
 }
 
-void chordinoInspectFrame(double time,
-                          const float *chroma,
-                          const double *smoothedChroma,
-                          const double *salience,
-                          const float *semitones,
-                          int gate) {
+void chordino_inspect_frame(double time,
+                            const float *chroma,
+                            const double *smoothedChroma,
+                            const double *salience,
+                            const float *semitones,
+                            int gate) {
     if (!collected.anyFrame) {
         collected.anyFrame = true;
         collected.firstFrame = time;

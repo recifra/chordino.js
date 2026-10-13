@@ -5,13 +5,13 @@
   examples/realtime).
 
   Only compiled when CHORDINO_INSPECT is defined, which the separate
-  chordino-inspect.js build does (see BUILD.md). Without it Chordino.c
+  chordino-inspect.js build does (see BUILD.md). Without it chordino.c
   compiles to exactly what ships in chordino.js. The hooks are free functions so
   src/chordino.h keeps its API; src/inspect.c implements them.
 */
 
-#ifndef _CHORDINO_INSPECT_
-#define _CHORDINO_INSPECT_
+#ifndef CHORDINO_INSPECT_H
+#define CHORDINO_INSPECT_H
 
 #ifdef CHORDINO_INSPECT
 
@@ -21,7 +21,7 @@ extern "C" {
 
 // Called once per chordino_decode(), before the first frame, with the names of
 // the nChord chords.
-void chordinoInspectBegin(int nChord, char *const *chordNames);
+void chordino_inspect_begin(int nChord, char *const *chordNames);
 
 // Called for every frame, in order, with its time in seconds.
 //  chroma:         24 bins, bass (0-11) stacked under treble (12-23), A-based
@@ -32,13 +32,13 @@ void chordinoInspectBegin(int nChord, char *const *chordNames);
 //  gate:           confidence gate outcome: 0 passed, 1 the best chord did not
 //                  beat N by enough, 2 a chord on another root came too close
 // chroma and semitones are null for the frames an earlier call already ran NNLS
-// on (see rawChromas in Chordino.c): they are only worked out once.
-void chordinoInspectFrame(double seconds,
-                          const float *chroma,
-                          const double *smoothedChroma,
-                          const double *salience,
-                          const float *semitones,
-                          int gate);
+// on (see rawChromas in chordino.c): they are only worked out once.
+void chordino_inspect_frame(double seconds,
+                            const float *chroma,
+                            const double *smoothedChroma,
+                            const double *salience,
+                            const float *semitones,
+                            int gate);
 
 #ifdef __cplusplus
 }

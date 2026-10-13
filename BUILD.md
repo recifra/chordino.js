@@ -20,7 +20,7 @@ npm run build
   production module should do it without `printf`, or the size comes back. The Vamp SDK is no longer
   needed: Chordino, a Vamp plugin upstream, is the `chordino_t` of
   `src/chordino.h`, with no descriptors or parameters (they are constants in
-  `src/nnls-chroma/Chordino.c`); `src/session.c` and `src/spectrum.c` do
+  `src/nnls-chroma/chordino.c`); `src/session.c` and `src/spectrum.c` do
   what the SDK's `PluginBufferingAdapter` and `PluginInputDomainAdapter` did,
   with the same results, over KISS FFT 131.2.0 in `src/kissfft/` (the files
   the build uses, unchanged), with the Hann window of its `Window` in
@@ -87,7 +87,7 @@ The player in `examples/player` visualizes the per-frame bins Chordino computes
 `examples/realtime` does the same live from the microphone, next to the chords
 the production worker posts. They use their own bundle so the production one
 keeps its size and API: `-DCHORDINO_INSPECT` turns on the hooks in
-`src/nnls-chroma/ChordinoInspect.h` and `src/inspect.c` adds `getAnalysis`,
+`src/nnls-chroma/chordino_inspect.h` and `src/inspect.c` adds `getAnalysis`,
 and `getPartialAnalysis` for reading while still feeding audio, which
 `src/inspect.js` wraps.
 

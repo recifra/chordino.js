@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-// Matthias Mauch's Chordino (src/nnls-chroma/Chordino.c): chords from the
+// Matthias Mauch's Chordino (src/nnls-chroma/chordino.c): chords from the
 // spectra of a recording, frame by frame. What was a Vamp plugin, with the
 // player's interface of descriptors and parameters, is these functions: frames
 // go in through chordino_process and chordino_decode reads every output from
