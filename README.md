@@ -40,7 +40,8 @@ cp node_modules/chordino.js/build/*.mjs node_modules/chordino.js/build/*.wasm pu
 
 Or load them from a CDN that mirrors npm, such as
 `https://cdn.jsdelivr.net/npm/chordino.js@0.1.0/build/`. A worker from another
-origin needs the shim shown below.
+origin needs the shim shown below. With Vite there is nothing to copy: see
+[With Vite](#with-vite).
 
 ## Usage
 
@@ -152,9 +153,29 @@ describes them and the package carries their types.
 [src/js/chord-worker.ts](src/js/chord-worker.ts) is a short example of the
 feeding loop.
 
+### With Vite
+
+Vite can bundle the worker and the worklet straight from the package, emitting
+`chordino.wasm` as a hashed asset, so nothing needs copying:
+
+```ts
+import ChordWorker from 'chordino.js/chord-worker.mjs?worker';
+import processorUrl from 'chordino.js/chord-processor.mjs?worker&url';
+import wasmUrl from 'chordino.js/chordino.wasm?url';
+
+const worker = new ChordWorker(); // in place of new Worker(new URL('chord-worker.mjs', lib), ...)
+await context.audioWorklet.addModule(processorUrl);
+const wasmBinary = await (await fetch(wasmUrl)).arrayBuffer();
+```
+
+Set `worker: { format: 'es' }` in `vite.config.ts`: with the default, `iife`,
+the worklet fails with `self is not defined`.
+[examples/vite-react](examples/vite-react) is a React app built this way, with
+a hook for each.
+
 ## Examples
 
-`examples/` has three pages that run on the build:
+`examples/` has three pages that run on the build, and a React app:
 
 - `extract/`: detects the chords of an MP3 through the worker and offers them as
   JSON, the way an app would.
@@ -168,6 +189,10 @@ Build first, then serve the directory and open one of them:
 ```sh
 python3 -m http.server -d examples
 ```
+
+- `vite-react/`: a React and Vite app with a hook for the worker and one for the
+  worklet. It runs on its own; [its README](examples/vite-react/README.md) has
+  the steps.
 
 ## Building and testing
 
