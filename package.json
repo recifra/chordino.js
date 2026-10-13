@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "bash src/build.sh",
     "test": "node --test \"test/*.test.js\""
   },
   "devDependencies": {

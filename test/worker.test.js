@@ -4,7 +4,7 @@ import { before, beforeEach, describe, test } from 'node:test';
 import { concat, decodeMp3, loadWorker, paths, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
-// Share of the progress examples/extract/chord-worker.js gives to feeding the audio
+// Share of the progress src/js/chord-worker.mjs gives to feeding the audio
 const FEED_SHARE = 0.25;
 
 /**
@@ -25,8 +25,8 @@ function noise(seconds, amplitude) {
 describe('offline worker', () => {
   let worker;
 
-  before(() => {
-    worker = loadWorker(paths.worker);
+  before(async () => {
+    worker = await loadWorker(paths.worker);
   });
 
   beforeEach(() => {
@@ -34,8 +34,8 @@ describe('offline worker', () => {
   });
 
   /** Runs one job: the progress values posted and the message that ended it. */
-  function run(data) {
-    worker.send(data);
+  async function run(data) {
+    await worker.send(data);
     return {
       progress: worker.messages.filter((message) => message.type === 'progress').map((message) => message.value),
       last: worker.messages.at(-1),
@@ -45,7 +45,7 @@ describe('offline worker', () => {
   test('chords.mp3 comes back as training.json timestamps', async () => {
     const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
     const duration = samples.length / sampleRate;
-    const { last } = run({ samples, sampleRate });
+    const { last } = await run({ samples, sampleRate });
 
     assert.equal(last.type, 'done', JSON.stringify(last));
     const { timestamps } = last.result;
@@ -59,7 +59,7 @@ describe('offline worker', () => {
 
   test('reports progress from 0 to 1, through getResult too', async () => {
     const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
-    const { progress, last } = run({ samples, sampleRate });
+    const { progress, last } = await run({ samples, sampleRate });
 
     assert.equal(last.type, 'done');
     assert.equal(progress[0], 0);
@@ -71,26 +71,26 @@ describe('offline worker', () => {
     assert.ok(progress.filter((value) => value > FEED_SHARE && value < 1).length > 10, `${progress}`);
   });
 
-  test('silence is a single closing mark', () => {
-    const { last } = run({ samples: new Float32Array(3 * SAMPLE_RATE), sampleRate: SAMPLE_RATE });
+  test('silence is a single closing mark', async () => {
+    const { last } = await run({ samples: new Float32Array(3 * SAMPLE_RATE), sampleRate: SAMPLE_RATE });
 
     assert.deepEqual(last, { type: 'done', result: { timestamps: [['', 3]] } });
   });
 
-  test('a gap with no chord comes back as an empty label', () => {
+  test('a gap with no chord comes back as an empty label', async () => {
     const samples = concat(
       synthChord(['C3', 'C4', 'E4', 'G4'], 2, SAMPLE_RATE),
       noise(2, 0.05),
       synthChord(['G2', 'G3', 'B3', 'D4'], 2, SAMPLE_RATE),
     );
-    const { last } = run({ samples, sampleRate: SAMPLE_RATE });
+    const { last } = await run({ samples, sampleRate: SAMPLE_RATE });
 
     assert.deepEqual(last.result.timestamps.map(([chord]) => chord), ['C', '', 'G', '']);
   });
 
-  test('no chord before the first one is left out', () => {
+  test('no chord before the first one is left out', async () => {
     const samples = concat(noise(2, 0.05), synthChord(['C3', 'C4', 'E4', 'G4'], 2, SAMPLE_RATE));
-    const { last } = run({ samples, sampleRate: SAMPLE_RATE });
+    const { last } = await run({ samples, sampleRate: SAMPLE_RATE });
 
     const { timestamps } = last.result;
     assert.deepEqual(timestamps.map(([chord]) => chord), ['C', '']);
@@ -98,8 +98,8 @@ describe('offline worker', () => {
     assert.equal(timestamps[1][1], 4);
   });
 
-  test('rejects a message without samples', () => {
-    const { progress, last } = run({});
+  test('rejects a message without samples', async () => {
+    const { progress, last } = await run({});
 
     assert.deepEqual(progress, []);
     assert.equal(last.type, 'error');

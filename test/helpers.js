@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 
 import { MPEGDecoder } from 'mpg123-decoder';
@@ -11,17 +11,29 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export const paths = {
-  chordino: path.join(root, 'examples/extract/chordino.js'),
-  inspect: path.join(root, 'examples/player/chordino-inspect.js'),
-  processor: path.join(root, 'examples/realtime/chordino-processor.js'),
-  worker: path.join(root, 'examples/extract/chordino-worker.js'),
+  chordino: path.join(root, 'build/chordino.mjs'),
+  wasm: path.join(root, 'build/chordino.wasm'),
+  processor: path.join(root, 'build/chord-processor.mjs'),
+  worker: path.join(root, 'build/chord-worker.mjs'),
+  inspect: path.join(root, 'build/inspect/chordino-inspect.js'),
   chordsMp3: path.join(root, 'test/fixtures/chords.mp3'),
 };
 
 /**
- * Evaluates an Emscripten build the way a <script> tag would and hands back its
- * Module. HEAPF32 is not exported on Module and is replaced whenever
- * ALLOW_MEMORY_GROWTH grows the heap, so it comes back as a getter.
+ * Instantiates the production build (build/chordino.mjs, which reads
+ * chordino.wasm from next to it under node). Same shape as loadScript.
+ */
+export async function loadChordino() {
+  const { default: createChordino } = await import(pathToFileURL(paths.chordino).href);
+  const Module = await createChordino();
+  return { Module, heapF32: () => Module.HEAPF32 };
+}
+
+/**
+ * Evaluates a classic Emscripten build (the inspect one) the way a <script> tag
+ * would and hands back its Module. HEAPF32 is not exported on Module and is
+ * replaced whenever ALLOW_MEMORY_GROWTH grows the heap, so it comes back as a
+ * getter.
  */
 export function loadScript(file) {
   const source = readFileSync(file, 'utf8');
@@ -52,7 +64,7 @@ function mixDown(channels) {
   return mono;
 }
 
-/** Same feeding loop as examples/extract/chord-worker.js; `read` gets the instance once everything is fed. */
+/** Same feeding loop as src/js/chord-worker.mjs; `read` gets the instance once everything is fed. */
 function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 4096, instance } = {}) {
   const pBuffer = Module._malloc(bufferSize * Float32Array.BYTES_PER_ELEMENT);
   const ownInstance = instance === undefined;
@@ -137,12 +149,13 @@ class FakePort {
 }
 
 /**
- * Loads the realtime worklet bundle with the AudioWorkletGlobalScope globals it
- * expects, and returns the registered processor class plus the clock behind
- * `currentTime`. The globals are installed on globalThis, which is fine because
- * node --test runs every test file in its own process.
+ * Loads the realtime worklet module with the AudioWorkletGlobalScope globals it
+ * expects, and returns the registered processor class, the clock behind
+ * `currentTime` and the wasm bytes a page hands it in processorOptions. The
+ * globals are installed on globalThis, which is fine because node --test runs
+ * every test file in its own process.
  */
-export function loadProcessor(file, sampleRate) {
+export async function loadProcessor(file, sampleRate) {
   const clock = { currentTime: 0 };
   const registered = {};
   class AudioWorkletProcessor {
@@ -158,20 +171,23 @@ export function loadProcessor(file, sampleRate) {
     },
   });
   Object.defineProperty(globalThis, 'currentTime', { get: () => clock.currentTime, configurable: true });
-  loadScript(file);
-  return { registered, clock };
+  await import(pathToFileURL(file).href);
+  return { registered, clock, wasmBinary: readFileSync(paths.wasm) };
 }
 
 /**
- * Loads a Web Worker bundle with the postMessage global it uses and returns what
- * it posts plus `send`, which delivers a message the way worker.postMessage
- * would. Like loadProcessor, the globals go on globalThis.
+ * Loads a module worker with the worker globals it uses and returns what it posts
+ * plus `send`, which delivers a message the way worker.postMessage would and
+ * resolves once the handler is done. Like loadProcessor, the globals go on
+ * globalThis; onmessage has to exist before the strict module assigns it.
  */
-export function loadWorker(file) {
+export async function loadWorker(file) {
   const messages = [];
-  globalThis.postMessage = (data) => messages.push(data);
-  loadScript(file);
-  // The bundle's top-level `onmessage = ...` lands on globalThis, as in a worker
+  Object.assign(globalThis, {
+    onmessage: null,
+    postMessage: (data) => messages.push(data),
+  });
+  await import(pathToFileURL(file).href);
   return { messages, send: (data) => globalThis.onmessage({ data }) };
 }
 

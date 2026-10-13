@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, test } from 'node:test';
 
-import { analyzeChords, decodeMp3, detectChords, loadScript, paths, synthChord } from './helpers.js';
+import { analyzeChords, decodeMp3, detectChords, loadChordino, loadScript, paths, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
 const OUTPUTS = { chroma: 24, smoothedchroma: 24, chordsalience: null, semitonespectrum: 84 };
@@ -19,8 +19,8 @@ describe('inspect build', () => {
   let chordino;
   let inspect;
 
-  before(() => {
-    chordino = loadScript(paths.chordino);
+  before(async () => {
+    chordino = await loadChordino();
     inspect = loadScript(paths.inspect);
   });
 

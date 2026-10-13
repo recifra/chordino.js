@@ -28,8 +28,11 @@
   <pre id="output"></pre>
 <script>
   // Decoding needs an audio context, which workers lack, so it happens here;
-  // chordino-worker.js (see chord-worker.js) does the rest.
+  // ../lib/chord-worker.mjs does the rest.
   const SAMPLE_RATE = 44100;
+  // Where chord-worker.mjs, chordino.mjs and chordino.wasm live; an app may serve
+  // them from a CDN
+  const LIB = new URL('../lib/', location.href);
 
   const $ = (id) => document.getElementById(id);
   const progress = $('progress');
@@ -75,7 +78,7 @@
     }
 
     const started = performance.now();
-    const current = worker = new Worker('./chordino-worker.js');
+    const current = worker = createWorker(new URL('chord-worker.mjs', LIB));
     const finish = (text) => {
       current.terminate();
       worker = null;
@@ -88,7 +91,7 @@
         const { timestamps } = data.result;
         const seconds = ((performance.now() - started) / 1000).toFixed(1);
         finish(`${name}: ${timestamps.length} marks, detected in ${seconds} s`);
-        // Laid out like test/fixtures/training.json, one mark per line
+        // One mark per line, like the hand-made chord files
         const text = `{"timestamps":[\n${timestamps.map((mark) => `  ${JSON.stringify(mark)}`).join(',\n')}\n]}\n`;
         output.textContent = text;
         URL.revokeObjectURL(download.href);
@@ -101,9 +104,23 @@
     };
     current.onerror = (event) => {
       event.preventDefault();
-      finish(`Detection failed: ${event.message || 'could not run chordino-worker.js'}`);
+      finish(`Detection failed: ${event.message || 'could not run chord-worker.mjs'}`);
     };
     current.postMessage({ samples, sampleRate: SAMPLE_RATE }, [samples.buffer]);
+  }
+
+  /**
+   * Workers have to come from the page's origin. One on another origin (scripts on
+   * a CDN) starts from a same-origin blob that imports it: inside, import.meta.url
+   * still points at the CDN, so chordino.mjs and chordino.wasm load from there
+   * (the CDN has to allow it with CORS).
+   */
+  function createWorker(url) {
+    if (url.origin === location.origin) {
+      return new Worker(url, { type: 'module' });
+    }
+    const shim = new Blob([`import ${JSON.stringify(url.href)};`], { type: 'text/javascript' });
+    return new Worker(URL.createObjectURL(shim), { type: 'module' });
   }
 
   /** Decodes at the rate the plugin is initialised with and mixes down to mono. */

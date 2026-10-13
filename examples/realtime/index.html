@@ -1,7 +1,11 @@
 <button id="btn-action">Start Detect</button>
 <script>
+    // Where chord-processor.mjs, chordino.mjs and chordino.wasm live; an app may
+    // serve them from a CDN, which addModule and fetch allow with CORS
+    const LIB = new URL('../lib/', location.href);
     let stream;
     let workletNode;
+    let wasmBinary;
     const btnAction = document.getElementById('btn-action');
 
     const startAction = async () => {
@@ -15,14 +19,18 @@
             const audioContext = new AudioContext();
             const source = audioContext.createMediaStreamSource(stream);
 
+            // Worklets cannot fetch, so the processor gets the wasm bytes from here
+            wasmBinary ??= await (await fetch(new URL('chordino.wasm', LIB))).arrayBuffer();
+
             // Load the AudioWorklet module
-            await audioContext.audioWorklet.addModule('./chordino-processor.js');
+            await audioContext.audioWorklet.addModule(new URL('chord-processor.mjs', LIB));
 
             // Create the AudioWorkletNode
             workletNode = new AudioWorkletNode(audioContext, 'chord-processor', {
                 channelCount: 1,
                 channelCountMode: "explicit",
-                channelInterpretation: "discrete"
+                channelInterpretation: "discrete",
+                processorOptions: { wasmBinary }
             });
 
             // Handle messages from the worklet
@@ -30,8 +38,11 @@
                 if (event.data.type === 'chordResult') {
                     console.log('Chords:', event.data.result);
                 }
-                if (event.data.type === 'log') {
-                    console.log('Log:', event.data.result);
+                if (event.data.type === 'ready') {
+                    console.log('Listening to microphone...');
+                }
+                if (event.data.type === 'error') {
+                    console.error('Could not load chordino.wasm:', event.data.message);
                 }
                 if (event.data.type === 'stopped') {
                     console.log('Stopped detecting');
@@ -40,7 +51,6 @@
 
             source.connect(workletNode);
             workletNode.connect(audioContext.destination);
-            console.log('Listening to microphone...');
         } catch (err) {
             console.error('Error accessing microphone:', err);
         }

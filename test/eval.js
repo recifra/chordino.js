@@ -1,16 +1,16 @@
 // Scores chord detection on a recording against reference chords (a JSON shaped
-// like test/fixtures/training.json). Not part of npm test, which has to stay
+// like training/training.json). Not part of npm test, which has to stay
 // fast and self-contained: run it by hand while tuning the detector.
 //
 //   node test/eval.js <audio.mp3> <expected.json> [--inspect]
 //
-// --inspect runs the inspect build instead (examples/player/chordino-inspect.js),
+// --inspect runs the inspect build instead (build/inspect/chordino-inspect.js),
 // which also reports how often the confidence gate rejected a frame.
 
 import { readFileSync } from 'node:fs';
 
 import { chordKey, compare, parseExpected } from '../examples/player/chords.js';
-import { analyzeChords, decodeMp3, detectChords, loadScript, paths } from './helpers.js';
+import { analyzeChords, decodeMp3, detectChords, loadChordino, loadScript, paths } from './helpers.js';
 
 // A detected change counts for an expected one when it lands in this window
 // around it, so a chord missed altogether is not paired with a far-away one.
@@ -27,9 +27,10 @@ const [audioFile, expectedFile] = files;
 
 const { samples, sampleRate } = await decodeMp3(audioFile);
 const duration = samples.length / sampleRate;
+const build = inspect ? loadScript(paths.inspect) : await loadChordino();
 const started = performance.now();
-const analysis = inspect ? analyzeChords(loadScript(paths.inspect), samples, sampleRate) : null;
-const chords = analysis?.chords ?? detectChords(loadScript(paths.chordino), samples, sampleRate);
+const analysis = inspect ? analyzeChords(build, samples, sampleRate) : null;
+const chords = analysis?.chords ?? detectChords(build, samples, sampleRate);
 const seconds = (performance.now() - started) / 1000;
 
 const detected = chords.map((item, i) => ({

@@ -1,7 +1,7 @@
 // Drop an audio file, let the worker precompute Chordino's per-frame bins, then
 // play it: every panel scrolls under a fixed playhead driven by audio.currentTime,
 // so pause and seek need no extra handling. A chord JSON (same shape as
-// test/fixtures/training.json) dropped with it, or later, is shown as the
+// training/training.json) dropped with it, or later, is shown as the
 // expected chords and graded against the detected ones.
 
 import { chordKey, compare, grade, parseExpected, segmentAt } from './chords.js';

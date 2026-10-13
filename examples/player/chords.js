@@ -36,7 +36,7 @@ export function segmentAt(segments, time) {
   return segments.find((segment) => segment.start <= time && time < segment.end);
 }
 
-// {"timestamps": [[chord, seconds], ...]} as in test/fixtures/training.json, where
+// {"timestamps": [[chord, seconds], ...]} as in training/training.json, where
 // "" is no chord (it closes the last one); getResult()'s [{chord, time}] works too.
 export function parseExpected(data) {
   const entries = Array.isArray(data) ? data : data?.timestamps;

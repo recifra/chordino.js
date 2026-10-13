@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, test } from 'node:test';
 
-import { concat, decodeMp3, detectChords, loadScript, paths, synthChord } from './helpers.js';
+import { concat, decodeMp3, detectChords, loadChordino, paths, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
 
@@ -22,8 +22,8 @@ function assertWellFormed(result) {
 describe('offline extraction', () => {
   let chordino;
 
-  before(() => {
-    chordino = loadScript(paths.chordino);
+  before(async () => {
+    chordino = await loadChordino();
   });
 
   test('chords.mp3 is G, C, F', async () => {
