@@ -234,7 +234,7 @@ npm test
 | `src/chordino.h` | `chordino_t`: Chordino, as functions instead of a Vamp plugin |
 | `src/chordextract.cpp` | The C functions `chordino.mjs` calls |
 | `src/chordextract.js` | The API `chordino.mjs` exposes over them |
-| `src/session.cpp`, `src/session.h` | What feeds Chordino: buffering and frame times |
+| `src/session.c`, `src/session.h` | `session_t`: what feeds Chordino, buffering and frame times |
 | `src/spectrum.c`, `src/spectrum.h` | `spectrum_t`: the spectra Chordino takes, windowed, through KISS FFT |
 | `src/window.c`, `src/window.h` | `window_t`: the Hann window, as Vamp's `Window` |
 | `src/realtime.c`, `src/realtime.h` | `realtime_t`: times in seconds and nanoseconds, as Vamp's `RealTime` |
@@ -251,7 +251,7 @@ NNLS Chroma and Chordino are by Matthias Mauch, Centre for Digital Music, Queen
 Mary University of London, and are licensed under the GNU General Public License,
 version 2 or later (see [src/nnls-chroma/COPYING](src/nnls-chroma/COPYING)). The
 modules in `build/` are compiled from that code, so chordino.js is distributed
-under the same license (see [LICENSE](LICENSE)). `src/session.cpp`,
+under the same license (see [LICENSE](LICENSE)). `src/session.c`,
 `src/spectrum.c`, `src/window.c` and `src/realtime.c` are adapted from the Vamp
 plugin SDK, by Chris Cannam and Queen Mary University of London, under a
 BSD-style license (see [src/vamp-sdk-COPYING](src/vamp-sdk-COPYING), which the

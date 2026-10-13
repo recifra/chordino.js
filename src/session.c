@@ -1,40 +1,37 @@
 #include "session.h"
 
-#include <cmath>
-#include <cstring>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
-namespace {
+static void (*decodeProgress)(double done) = NULL;
 
-void (*decodeProgress)(double done) = nullptr;
-
-}
-
-Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime) {
+session_t *session_create(float sampleRate, int inputBlockSize, bool realtime) {
     int stepSize = CHORDINO_STEP_SIZE;
     int blockSize = CHORDINO_BLOCK_SIZE;
-    auto *session = new Session();
+    session_t *session = malloc(sizeof(session_t));
     session->chordino = chordino_create(sampleRate);
     session->sampleRate = sampleRate;
     session->realtime = realtime;
     session->inputBlockSize = inputBlockSize;
     session->stepSize = stepSize;
     session->blockSize = blockSize;
-    session->pending = new float[blockSize + inputBlockSize];
-    session->shifted = new float[blockSize + blockSize / 2];
+    session->pending = malloc((blockSize + inputBlockSize) * sizeof(float));
+    session->shifted = malloc((blockSize + blockSize / 2) * sizeof(float));
     session->spectrum = spectrum_create(blockSize);
-    sessionReset(session);
+    session_reset(session);
     return session;
 }
 
-void sessionRelease(Session *session) {
+void session_destroy(session_t *session) {
     chordino_destroy(session->chordino);
-    delete[] session->pending;
-    delete[] session->shifted;
+    free(session->pending);
+    free(session->shifted);
     spectrum_destroy(session->spectrum);
-    delete session;
+    free(session);
 }
 
-void sessionReset(Session *session) {
+void session_reset(session_t *session) {
     session->pendingCount = 0;
     session->frame = 0;
     session->fed = false;
@@ -42,11 +39,9 @@ void sessionReset(Session *session) {
     chordino_reset(session->chordino);
 }
 
-namespace {
-
 // Frames are timed on the sample rate rounded to a whole number
-unsigned int frameRate(const Session *session) {
-    return (unsigned int) int(session->sampleRate + 0.5);
+static unsigned int frame_rate(const session_t *session) {
+    return (unsigned int) (int) (session->sampleRate + 0.5);
 }
 
 // Hands Chordino the spectrum of the blockSize samples at block, which start at
@@ -54,12 +49,12 @@ unsigned int frameRate(const Session *session) {
 // the timestamp moves forward half a block (realtime), or the audio is delayed
 // half a block behind it, starting from silence (offline: the first frame is
 // then centred on the first sample, and the chords start at 0).
-void analyse(Session *session, const float *block, realtime_t timestamp) {
+static void analyse(session_t *session, const float *block, realtime_t timestamp) {
     int blockSize = session->blockSize;
     int half = blockSize / 2;
     const float *input = block;
     if (session->realtime) {
-        timestamp = realtime_add(timestamp, realtime_from_frame(half, frameRate(session)));
+        timestamp = realtime_add(timestamp, realtime_from_frame(half, frame_rate(session)));
         // One nanosecond more when the sum rounded down to just before a frame
         unsigned int roundedRate = session->sampleRate > 0.f ? (unsigned int) round(session->sampleRate) : 1;
         realtime_t later = realtime_add(timestamp, realtime_make(0, 1));
@@ -82,18 +77,16 @@ void analyse(Session *session, const float *block, realtime_t timestamp) {
 }
 
 // Analyses the block at the start of pending and steps past stepSize samples of it
-void step(Session *session) {
-    analyse(session, session->pending, realtime_from_frame(session->frame, frameRate(session)));
+static void step(session_t *session) {
+    analyse(session, session->pending, realtime_from_frame(session->frame, frame_rate(session)));
     session->pendingCount -= session->stepSize;
     memmove(session->pending, session->pending + session->stepSize, session->pendingCount * sizeof(float));
     session->frame += session->stepSize;
 }
 
-}
-
-void sessionProcess(Session *session, const float *samples, realtime_t timestamp) {
+void session_process(session_t *session, const float *samples, realtime_t timestamp) {
     if (!session->fed) {
-        session->frame = realtime_to_frame(timestamp, frameRate(session));
+        session->frame = realtime_to_frame(timestamp, frame_rate(session));
         session->fed = true;
     }
     // pending never holds a whole block between calls, so this always fits
@@ -104,7 +97,7 @@ void sessionProcess(Session *session, const float *samples, realtime_t timestamp
     }
 }
 
-const chordino_result_t *sessionFinish(Session *session) {
+const chordino_result_t *session_finish(session_t *session) {
     // Only one block more, padded: the frames the last few samples were
     // centred on are not made up
     if (session->pendingCount > 0) {
@@ -113,13 +106,13 @@ const chordino_result_t *sessionFinish(Session *session) {
         session->pendingCount = session->blockSize;
         step(session);
     }
-    return sessionDecode(session);
+    return session_decode(session);
 }
 
-const chordino_result_t *sessionDecode(Session *session) {
+const chordino_result_t *session_decode(session_t *session) {
     return chordino_decode(session->chordino, decodeProgress);
 }
 
-void sessionSetProgress(void (*progress)(double done)) {
+void session_set_progress(void (*progress)(double done)) {
     decodeProgress = progress;
 }

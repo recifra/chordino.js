@@ -22,7 +22,7 @@ npm run build
   streams or `printf`, or the size comes back. The Vamp SDK is no longer
   needed: Chordino, a Vamp plugin upstream, is the `chordino_t` of
   `src/chordino.h`, with no descriptors or parameters (they are constants in
-  `src/nnls-chroma/Chordino.cpp`); `src/session.cpp` and `src/spectrum.c` do
+  `src/nnls-chroma/Chordino.cpp`); `src/session.c` and `src/spectrum.c` do
   what the SDK's `PluginBufferingAdapter` and `PluginInputDomainAdapter` did,
   with the same results, over KISS FFT 131.2.0 in `src/kissfft/` (the files
   the build uses, unchanged), with the Hann window of its `Window` in

@@ -39,7 +39,7 @@ void forwardProgress(double done) {
 extern "C" EMSCRIPTEN_KEEPALIVE
 void setProgressReports(bool enabled) {
     reportedPercent = -1;
-    sessionSetProgress(enabled ? &forwardProgress : nullptr);
+    session_set_progress(enabled ? &forwardProgress : nullptr);
 }
 
 // Every frame is centred on its timestamp. Offline, that is done by delaying the
@@ -50,31 +50,31 @@ void setProgressReports(bool enabled) {
 // instead: the same frames minus the first few, each out half a block sooner,
 // which is what the realtime worklet wants.
 extern "C" EMSCRIPTEN_KEEPALIVE
-Session *initializePlugin(
+session_t *initializePlugin(
     float samplerate,
     size_t blocksize,
     bool realtime
 ) {
-    return sessionCreate(samplerate, int(blocksize), realtime);
+    return session_create(samplerate, int(blocksize), realtime);
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE
-void releasePlugin(Session *session) {
-    sessionRelease(session);
+void releasePlugin(session_t *session) {
+    session_destroy(session);
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE
-void resetProcess(Session *session) {
-    sessionReset(session);
+void resetProcess(session_t *session) {
+    session_reset(session);
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE
 void processBuffer(
-    Session *session,
+    session_t *session,
     float *buffer,
     long milliseconds
 ) {
-    sessionProcess(session, buffer, realtime_from_milliseconds((int) milliseconds));
+    session_process(session, buffer, realtime_from_milliseconds((int) milliseconds));
 }
 
 namespace {
@@ -90,9 +90,9 @@ void pushChords(const chordino_result_t *result) {
 // Chords of everything fed, once all of it has been: the last few samples still
 // pending are padded with zeros to make up a whole frame.
 extern "C" EMSCRIPTEN_KEEPALIVE
-void getResult(Session *session) {
+void getResult(session_t *session) {
     // Chordino does nearly all of its work here
-    pushChords(sessionFinish(session));
+    pushChords(session_finish(session));
 }
 
 // Chords of the frames analysed so far, for a caller that goes on feeding audio
@@ -101,14 +101,14 @@ void getResult(Session *session) {
 // samples with zeros, and the audio fed next would then follow those zeros: a
 // gap in the signal on every read.
 extern "C" EMSCRIPTEN_KEEPALIVE
-void getPartialResult(Session *session) {
-    pushChords(sessionDecode(session));
+void getPartialResult(session_t *session) {
+    pushChords(session_decode(session));
 }
 
 // Forgets the frames from before the given time (in the clock processBuffer was
 // given), so getPartialResult decodes a bounded window however long the audio
 // goes on. The tuning estimate still counts them.
 extern "C" EMSCRIPTEN_KEEPALIVE
-void forgetBefore(Session *session, long milliseconds) {
+void forgetBefore(session_t *session, long milliseconds) {
     chordino_forget_before(session->chordino, realtime_from_seconds(milliseconds / 1000.0));
 }

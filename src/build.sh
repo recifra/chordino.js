@@ -9,9 +9,9 @@ cd "$(dirname "$0")"
 
 OUT=../build
 SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/chromamethods.cpp nnls-chroma/viterbi.cpp
-    nnls-chroma/nnls.c session.cpp spectrum.c window.c kissfft.c realtime.c
+    nnls-chroma/nnls.c session.c spectrum.c window.c kissfft.c realtime.c
     chordextract.cpp"
-# Nothing of the Vamp SDK: session.cpp and spectrum.c do what its host adapters
+# Nothing of the Vamp SDK: session.c and spectrum.c do what its host adapters
 # did, window.c what its Window did and realtime.c what its RealTime did. The
 # FFT in double precision, as the Vamp SDK ran it, in every file that includes
 # kissfft.

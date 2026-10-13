@@ -158,10 +158,10 @@ emscripten::val analysisResult(const chordino_result_t *decoded) {
 }
 
 emscripten::val getAnalysis(uintptr_t lpSession) {
-    auto *session = reinterpret_cast<Session*>(lpSession);
+    auto *session = reinterpret_cast<session_t*>(lpSession);
     collected = Collected();
     // Chordino does all its work here, calling the hooks once per frame
-    return analysisResult(sessionFinish(session));
+    return analysisResult(session_finish(session));
 }
 
 // Like getAnalysis, for a caller still feeding audio (examples/realtime): it
@@ -169,11 +169,11 @@ emscripten::val getAnalysis(uintptr_t lpSession) {
 // chords of every frame left (see forgetBefore) but the bins of the frames after
 // afterSeconds only, with the values they have now.
 emscripten::val getPartialAnalysis(uintptr_t lpSession, double afterSeconds) {
-    auto *session = reinterpret_cast<Session*>(lpSession);
+    auto *session = reinterpret_cast<session_t*>(lpSession);
     collected = Collected();
     partial = true;
     collectAfter = afterSeconds;
-    const chordino_result_t *decoded = sessionDecode(session);
+    const chordino_result_t *decoded = session_decode(session);
     partial = false;
     // Frames before the first one decoded have been forgotten for good
     if (collected.anyFrame) {
