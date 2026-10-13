@@ -77,7 +77,7 @@ void processBuffer(
     float *buffer,
     long milliseconds
 ) {
-    sessionProcess(session, buffer, RealTime::fromMilliseconds((int) milliseconds));
+    sessionProcess(session, buffer, realtime_from_milliseconds((int) milliseconds));
 }
 
 namespace {
@@ -102,9 +102,8 @@ void pushChords(Plugin::FeatureSet &fs, int chordFeatureNo) {
     Plugin::FeatureList& chordFeatures = fs[chordFeatureNo];
     for (int i = 0; i < (int)chordFeatures.size(); ++i)
     {
-        // RealTime::msec() is only the sub-second part, so build the time from sec too
         const RealTime &timestamp = chordFeatures[i].timestamp;
-        pushChord(chordFeatures[i].label.c_str(), timestamp.sec + timestamp.nsec / 1e9);
+        pushChord(chordFeatures[i].label.c_str(), realtime_to_seconds({timestamp.sec, timestamp.nsec}));
     }
 }
 

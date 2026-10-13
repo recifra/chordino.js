@@ -2,7 +2,7 @@
 
 ## Requirements
 - emsdk (`emcc` on the PATH)
-- vamp-plugin-sdk, for its plugin headers and `RealTime`
+- vamp-plugin-sdk, for its plugin headers
 - Node.js, for TypeScript, esbuild and the tests (`npm install`)
 
 ## Build
@@ -21,12 +21,15 @@ npm run build
   `src/noiostream.h`, which drops every `std::cerr` write so that libc++'s
   streams stay out of the wasm (they were more than half of it); the inspect
   build keeps them. Anything new that formats text should do it without
-  streams or `printf`, or the size comes back. Of the Vamp SDK only
-  `RealTime` is compiled: `src/session.cpp` does what its
-  `PluginBufferingAdapter` and `PluginInputDomainAdapter` did, with the same
-  results, over KISS FFT 131.2.0 in `src/kissfft/` (the files the build uses,
-  unchanged). `src/kissfft.c` compiles it with `NDEBUG`, for that file only, as
-  its error messages would bring `fprintf` back.
+  streams or `printf`, or the size comes back. No Vamp SDK source is
+  compiled, only its plugin headers, which Chordino still builds on:
+  `src/session.cpp` does what its `PluginBufferingAdapter` and
+  `PluginInputDomainAdapter` did, with the same results, over KISS FFT 131.2.0
+  in `src/kissfft/` (the files the build uses, unchanged), and
+  `src/realtime.c` does its `RealTime` arithmetic step for step;
+  `src/vamp-realtime.cpp` defines the two `Vamp::RealTime` members Chordino
+  calls over it. `src/kissfft.c` compiles KISS FFT with `NDEBUG`, for that file
+  only, as its error messages would bring `fprintf` back.
 - `npm run build:js` type-checks the TypeScript in `src/js/` (`tsc -b src/js`),
   has esbuild minify it into ES modules and copies `src/js/chordino.d.mts`
   next to them. It needs no `emcc`, so after a change to the workers or the
@@ -65,7 +68,7 @@ Everything lands in `build/`:
   below. Not for apps, and not in the package.
 
 An app ships the five files at the top of `build/` together, in one directory.
-The two workers share the one `.wasm` (6 KB + 99 KB; the old single-file
+The two workers share the one `.wasm` (5 KB + 98 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
 2 and 1 KB of their own.
 

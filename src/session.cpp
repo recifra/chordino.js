@@ -3,8 +3,6 @@
 #include <cmath>
 #include <cstring>
 
-using Vamp::RealTime;
-
 Session *sessionCreate(float sampleRate, int inputBlockSize, bool realtime) {
     auto *chordino = new Chordino(sampleRate);
     int stepSize = int(chordino->getPreferredStepSize());
@@ -70,18 +68,17 @@ unsigned int frameRate(const Session *session) {
 // the timestamp moves forward half a block (realtime), or the audio is delayed
 // half a block behind it, starting from silence (offline: the first frame is
 // then centred on the first sample, and the chords start at 0).
-void analyse(Session *session, const float *block, RealTime timestamp) {
+void analyse(Session *session, const float *block, realtime_t timestamp) {
     int blockSize = session->blockSize;
     int half = blockSize / 2;
     const float *input = block;
     if (session->realtime) {
-        timestamp = timestamp + RealTime::frame2RealTime(half, frameRate(session));
+        timestamp = realtime_add(timestamp, realtime_from_frame(half, frameRate(session)));
         // One nanosecond more when the sum rounded down to just before a frame
         unsigned int roundedRate = session->sampleRate > 0.f ? (unsigned int) round(session->sampleRate) : 1;
-        RealTime nsec(0, 1);
-        if (RealTime::realTime2Frame(timestamp, roundedRate) <
-            RealTime::realTime2Frame(timestamp + nsec, roundedRate)) {
-            timestamp = timestamp + nsec;
+        realtime_t later = realtime_add(timestamp, realtime_make(0, 1));
+        if (realtime_to_frame(timestamp, roundedRate) < realtime_to_frame(later, roundedRate)) {
+            timestamp = later;
         }
     } else {
         // shifted holds half a block from before this one, then this one
@@ -110,12 +107,12 @@ void analyse(Session *session, const float *block, RealTime timestamp) {
         session->bins[i * 2] = float(session->spectrum[i].r);
         session->bins[i * 2 + 1] = float(session->spectrum[i].i);
     }
-    session->chordino->process(&session->bins, timestamp);
+    session->chordino->process(&session->bins, Vamp::RealTime(timestamp.sec, timestamp.nsec));
 }
 
 // Analyses the block at the start of pending and steps past stepSize samples of it
 void step(Session *session) {
-    analyse(session, session->pending, RealTime::frame2RealTime(session->frame, frameRate(session)));
+    analyse(session, session->pending, realtime_from_frame(session->frame, frameRate(session)));
     session->pendingCount -= session->stepSize;
     memmove(session->pending, session->pending + session->stepSize, session->pendingCount * sizeof(float));
     session->frame += session->stepSize;
@@ -123,9 +120,9 @@ void step(Session *session) {
 
 }
 
-void sessionProcess(Session *session, const float *samples, RealTime timestamp) {
+void sessionProcess(Session *session, const float *samples, realtime_t timestamp) {
     if (!session->fed) {
-        session->frame = RealTime::realTime2Frame(timestamp, frameRate(session));
+        session->frame = realtime_to_frame(timestamp, frameRate(session));
         session->fed = true;
     }
     // pending never holds a whole block between calls, so this always fits

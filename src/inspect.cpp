@@ -91,7 +91,7 @@ emscripten::val bins(const vector<string> &names, const vector<float> &values) {
 }
 
 double seconds(const RealTime &timestamp) {
-    return timestamp.sec + timestamp.nsec / 1e9;
+    return realtime_to_seconds({timestamp.sec, timestamp.nsec});
 }
 
 }
