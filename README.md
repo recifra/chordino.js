@@ -232,7 +232,7 @@ npm test
 | --- | --- |
 | `src/nnls-chroma/` | The NNLS Chroma / Chordino plugin source, adapted for this build |
 | `src/chordino.h` | `chordino_t`: Chordino, as functions instead of a Vamp plugin |
-| `src/chordextract.cpp` | The C functions `chordino.mjs` calls |
+| `src/chordextract.c` | The C functions `chordino.mjs` calls |
 | `src/chordextract.js` | The API `chordino.mjs` exposes over them |
 | `src/session.c`, `src/session.h` | `session_t`: what feeds Chordino, buffering and frame times |
 | `src/spectrum.c`, `src/spectrum.h` | `spectrum_t`: the spectra Chordino takes, windowed, through KISS FFT |

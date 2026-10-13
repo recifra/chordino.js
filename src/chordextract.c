@@ -1,7 +1,7 @@
 #include "session.h"
 
 #include <emscripten/emscripten.h>
-#include <cmath>
+#include <math.h>
 
 // The functions exported here are plain C ones; src/chordextract.js wraps them
 // in the API src/js/chordino.d.mts describes, without embind and its runtime.
@@ -19,11 +19,9 @@ EM_JS(void, reportProgress, (double done), {
     progressCallback(done);
 });
 
-namespace {
+static int reportedPercent = -1;
 
-int reportedPercent = -1;
-
-void forwardProgress(double done) {
+static void forwardProgress(double done) {
     // Chordino reports every frame; JS only hears about whole percents
     int percent = (int) floor(done * 100);
     if (percent == reportedPercent) return;
@@ -31,15 +29,13 @@ void forwardProgress(double done) {
     reportProgress(done);
 }
 
-}
-
 // Has getResult() report its progress, from 0 to 1, while it works through the
 // buffered audio. Feeding the audio is quick in comparison, the caller can
 // report that part itself.
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void setProgressReports(bool enabled) {
     reportedPercent = -1;
-    session_set_progress(enabled ? &forwardProgress : nullptr);
+    session_set_progress(enabled ? &forwardProgress : NULL);
 }
 
 // Every frame is centred on its timestamp. Offline, that is done by delaying the
@@ -49,26 +45,26 @@ void setProgressReports(bool enabled) {
 // each block is analysed as it comes and its timestamp moved to its centre
 // instead: the same frames minus the first few, each out half a block sooner,
 // which is what the realtime worklet wants.
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 session_t *initializePlugin(
     float samplerate,
     size_t blocksize,
     bool realtime
 ) {
-    return session_create(samplerate, int(blocksize), realtime);
+    return session_create(samplerate, (int) blocksize, realtime);
 }
 
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void releasePlugin(session_t *session) {
     session_destroy(session);
 }
 
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void resetProcess(session_t *session) {
     session_reset(session);
 }
 
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void processBuffer(
     session_t *session,
     float *buffer,
@@ -77,19 +73,15 @@ void processBuffer(
     session_process(session, buffer, realtime_from_milliseconds((int) milliseconds));
 }
 
-namespace {
-
-void pushChords(const chordino_result_t *result) {
+static void pushChords(const chordino_result_t *result) {
     for (int i = 0; i < result->chordCount; ++i) {
         pushChord(result->chords[i].label, realtime_to_seconds(result->chords[i].time));
     }
 }
 
-}
-
 // Chords of everything fed, once all of it has been: the last few samples still
 // pending are padded with zeros to make up a whole frame.
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void getResult(session_t *session) {
     // Chordino does nearly all of its work here
     pushChords(session_finish(session));
@@ -100,7 +92,7 @@ void getResult(session_t *session) {
 // of times. Finishing the session like getResult does would pad its pending
 // samples with zeros, and the audio fed next would then follow those zeros: a
 // gap in the signal on every read.
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void getPartialResult(session_t *session) {
     pushChords(session_decode(session));
 }
@@ -108,7 +100,7 @@ void getPartialResult(session_t *session) {
 // Forgets the frames from before the given time (in the clock processBuffer was
 // given), so getPartialResult decodes a bounded window however long the audio
 // goes on. The tuning estimate still counts them.
-extern "C" EMSCRIPTEN_KEEPALIVE
+EMSCRIPTEN_KEEPALIVE
 void forgetBefore(session_t *session, long milliseconds) {
     chordino_forget_before(session->chordino, realtime_from_seconds(milliseconds / 1000.0));
 }

@@ -19,7 +19,7 @@ extern "C" {
 typedef struct {
     chordino_t *chordino;
     float sampleRate;
-    bool realtime;          // see initializePlugin in chordextract.cpp
+    bool realtime;          // see initializePlugin in chordextract.c
     int inputBlockSize;     // samples per session_process
     int stepSize;           // CHORDINO_STEP_SIZE and CHORDINO_BLOCK_SIZE
     int blockSize;

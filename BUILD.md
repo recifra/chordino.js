@@ -78,7 +78,7 @@ clash. So `src/js/tsconfig.json` only references one project per scope:
 `tsconfig.worker.json` (lib `webworker`) and `tsconfig.worklet.json`
 (`@types/audioworklet`). The workers import `./chordino.mjs`, typed by
 `src/js/chordino.d.mts` after `src/chordextract.js`, the API it puts over the
-C functions `src/chordextract.cpp` exports; keep the three in step. esbuild
+C functions `src/chordextract.c` exports; keep the three in step. esbuild
 transpiles each file on
 its own and leaves that import as it is, so `chordino.mjs` must sit next to
 them.

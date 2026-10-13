@@ -1,6 +1,6 @@
 // Inspection build only (CHORDINO_INSPECT, see BUILD.md): exposes the per-frame
 // bins Chordino computes while decoding, for the examples/player and
-// examples/realtime visualizations. It is linked next to chordextract.cpp, which
+// examples/realtime visualizations. It is linked next to chordextract.c, which
 // still provides initializePlugin, processBuffer and releasePlugin; this file
 // only adds getAnalysis and getPartialAnalysis.
 

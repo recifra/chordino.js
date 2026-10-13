@@ -1,5 +1,5 @@
 // Types of chordino.mjs, the module src/build.sh compiles; src/chordextract.js
-// puts this API over the C functions src/chordextract.cpp exports. Pointers
+// puts this API over the C functions src/chordextract.c exports. Pointers
 // into the wasm heap and plugin instances are plain numbers.
 
 /** One chord Chordino read: its label ('N' for no chord) and when it starts, in seconds */

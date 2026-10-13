@@ -1,8 +1,8 @@
 // Appended to the module (--post-js in src/build.sh): the API that
-// src/js/chordino.d.mts describes, over the C functions chordextract.cpp
+// src/js/chordino.d.mts describes, over the C functions chordextract.c
 // exports. Names are quoted so that Closure leaves them as they are.
 
-// What the pushChord and reportProgress EM_JS functions in chordextract.cpp write to
+// What the pushChord and reportProgress EM_JS functions in chordextract.c write to
 var chordList = [];
 var progressCallback = null;
 
