@@ -21,7 +21,9 @@ Everything lands in `build/`:
   with its progress (0 to 1) while it runs; `null` turns that off. It is for
   the end of the audio: it pads the samples still buffered with zeros. To read
   while still feeding, as the worklet does, `getPartialResult` decodes the
-  frames so far and leaves the buffered samples alone.
+  frames so far and leaves the buffered samples alone; each frame's chroma is
+  worked out once and kept, and `forgetBefore(instance, milliseconds)` drops
+  the frames before that time so every read decodes a bounded window.
 - `chord-worker.mjs` (from `src/js/`): module worker that detects the chords of
   a whole recording, posting its progress and then `{"timestamps": [[chord,
   seconds], ..., ["", end]]}`. `examples/extract/index.html` drives it,

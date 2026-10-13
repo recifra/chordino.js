@@ -43,6 +43,13 @@ public:
     bool initialise(size_t channels, size_t stepSize, size_t blockSize);
     void reset();
 
+    // For hosts that read chords while still feeding audio, calling
+    // getRemainingFeatures() again and again: drops the frames from before
+    // seconds, so each call decodes a bounded window. The tuning estimate keeps
+    // counting every frame since reset(). Seconds rather than a RealTime: the
+    // host SDK has its own RealTime type, which would not link.
+    void forgetFramesBefore(double seconds);
+
 protected:
     mutable int m_outputChords;
     mutable int m_outputChordnotes;
@@ -51,6 +58,11 @@ protected:
     vector<float> m_chorddict;
     vector<vector<int> > m_chordnotes;
     vector<string> m_chordnames;
+    // Raw stacked (bass, treble) chroma of the first frames of m_logSpectrum,
+    // kept between getRemainingFeatures() calls so a host calling it repeatedly
+    // pays the NNLS of each frame once; those frames keep the tuning estimated
+    // when they were first decoded. Chord matching runs on a smoothed copy.
+    vector<vector<float> > m_rawChromas;
 };
 
 // Progress of getRemainingFeatures(), which does nearly all of the work in one

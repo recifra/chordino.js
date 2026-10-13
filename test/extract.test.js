@@ -118,6 +118,22 @@ describe('offline extraction', () => {
     assert.deepEqual(labels(once), labels(detectChords(chordino, samples, sampleRate)));
   });
 
+  test('forgetBefore leaves getPartialResult the audio after it', () => {
+    const { Module } = chordino;
+    const instance = Module.initializePlugin(SAMPLE_RATE, 4096);
+    try {
+      const samples = concat(synthChord(voicings.C, 3, SAMPLE_RATE), synthChord(voicings.Am, 3, SAMPLE_RATE));
+      detectPartial(chordino, samples, SAMPLE_RATE, { instance, whileFeeding: true });
+      Module.forgetBefore(instance, 3500);
+      const result = Module.getPartialResult(instance);
+
+      assert.deepEqual(labels(result), ['Am', 'N']);
+      assert.ok(result[0].time >= 3.5, `first frame at ${result[0].time}`);
+    } finally {
+      Module.releasePlugin(instance);
+    }
+  });
+
   test('resetProcess drops the audio fed before it', () => {
     const { Module } = chordino;
     const instance = Module.initializePlugin(SAMPLE_RATE, 4096);

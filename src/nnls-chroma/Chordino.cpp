@@ -215,6 +215,19 @@ Chordino::reset()
 {
     if (debug_on) cerr << "--> reset";
     NNLSBase::reset();
+    m_rawChromas.clear();
+}
+
+void
+Chordino::forgetFramesBefore(double seconds)
+{
+    Vamp::RealTime start = Vamp::RealTime::fromSeconds(seconds);
+    size_t drop = 0;
+    while (drop < m_logSpectrum.size() && m_logSpectrum[drop].timestamp < start) drop++;
+    if (drop == 0) return;
+    m_logSpectrum.erase(m_logSpectrum.begin(), m_logSpectrum.begin() + drop);
+    m_localTuning.erase(m_localTuning.begin(), m_localTuning.begin() + drop);
+    m_rawChromas.erase(m_rawChromas.begin(), m_rawChromas.begin() + min(drop, m_rawChromas.size()));
 }
 
 Chordino::FeatureSet
@@ -328,20 +341,26 @@ Chordino::getRemainingFeatures()
     **/
     if (debug_on) cerr << endl << "[Chordino Plugin] Tuning Log-Frequency Spectrogram ... ";
 					
-    int count = 0;
+    int count;
 		
     FeatureList tunedSpec;
     int nFrame = m_logSpectrum.size();
+    // Frames an earlier call already worked the chroma out for (see m_rawChromas):
+    // only the ones after them go through tuning and NNLS below.
+    int nCached = m_rawChromas.size();
+    count = nCached;
     
     vector<Vamp::RealTime> timestamps;
+    for (int iFrame = 0; iFrame < nFrame; iFrame++) {
+        timestamps.push_back(m_logSpectrum[iFrame].timestamp);
+    }
 
-    report(0, progressTuning, 0, nFrame);
-    for (FeatureList::iterator i = m_logSpectrum.begin(); i != m_logSpectrum.end(); ++i) {
+    report(0, progressTuning, count, nFrame);
+    for (FeatureList::iterator i = m_logSpectrum.begin() + nCached; i != m_logSpectrum.end(); ++i) {
         Feature currentLogSpectrum = *i;
         Feature currentTunedSpec; // tuned log-frequency spectrum
         currentTunedSpec.hasTimestamp = true;
         currentTunedSpec.timestamp = currentLogSpectrum.timestamp;
-        timestamps.push_back(currentLogSpectrum.timestamp);
         currentTunedSpec.values.push_back(0.0); currentTunedSpec.values.push_back(0.0); // set lower edge to zero
 		
         if (m_tuneLocal) {
@@ -396,16 +415,13 @@ Chordino::getRemainingFeatures()
 	    
     vector<vector<double> > chordogram;
     vector<vector<int> > scoreChordogram;
-    vector<float> chordchange = vector<float>(tunedSpec.size(),0);
-    count = 0;
+    vector<float> chordchange = vector<float>(nFrame,0);
+    count = nCached;
 
     FeatureList chromaList;
 
     bool clipwarned = false;
 
-    // Raw stacked chroma of every frame; chord matching runs on a smoothed copy
-    // computed once all of them are known (see below).
-    vector<vector<float> > rawChromas;
 #ifdef CHORDINO_INSPECT
     vector<vector<float> > inspectSemitones;
     chordinoInspectBegin(m_chordnames);
@@ -499,7 +515,7 @@ Chordino::getRemainingFeatures()
         vector<float> origchroma = chroma;
         chroma.insert(chroma.begin(), basschroma.begin(), basschroma.end()); // just stack the both chromas
         currentChromas.values = chroma;
-        rawChromas.push_back(chroma);
+        m_rawChromas.push_back(chroma);
 
         if (m_doNormalizeChroma > 0) {
             vector<float> chromanorm = vector<float>(3,0);			
@@ -555,16 +571,16 @@ Chordino::getRemainingFeatures()
         // Bins 0-11 are the bass chroma, 12-23 the treble one (stacked above).
         for (int i = 0; i < 24; i++) {
             double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
-            runningChroma[i] = iFrame == 0 ? rawChromas[iFrame][i]
-                : alpha * rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
+            runningChroma[i] = iFrame == 0 ? m_rawChromas[iFrame][i]
+                : alpha * m_rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
             smoothedChromas[iFrame][i] = runningChroma[i] / 2;
         }
     }
     for (int iFrame = nFrame - 1; iFrame >= 0; iFrame--) {
         for (int i = 0; i < 24; i++) {
             double alpha = (i < 12) ? chromaEmaAlphaBass : chromaEmaAlpha;
-            runningChroma[i] = iFrame == nFrame - 1 ? rawChromas[iFrame][i]
-                : alpha * rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
+            runningChroma[i] = iFrame == nFrame - 1 ? m_rawChromas[iFrame][i]
+                : alpha * m_rawChromas[iFrame][i] + (1 - alpha) * runningChroma[i];
             smoothedChromas[iFrame][i] += runningChroma[i] / 2;
         }
     }
@@ -663,13 +679,16 @@ Chordino::getRemainingFeatures()
         }
         chordogram.push_back(currentChordSalience);
 #ifdef CHORDINO_INSPECT
-        int gate = 0;
-        if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
-        else if (!confident) gate = 2;
-        const Feature &frameChromas = chromaList[iFrame];
-        chordinoInspectFrame(frameChromas.timestamp.sec + frameChromas.timestamp.nsec / 1e9,
-                             frameChromas.values,
-                             smoothedChroma, currentChordSalience, inspectSemitones[iFrame].data(), gate);
+        // Only frames this call ran NNLS on have their chroma and semitones here
+        if (iFrame >= nCached) {
+            int gate = 0;
+            if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
+            else if (!confident) gate = 2;
+            const Feature &frameChromas = chromaList[iFrame - nCached];
+            chordinoInspectFrame(frameChromas.timestamp.sec + frameChromas.timestamp.nsec / 1e9,
+                                 frameChromas.values,
+                                 smoothedChroma, currentChordSalience, inspectSemitones[iFrame - nCached].data(), gate);
+        }
 #endif
         report(progressChroma, progressSalience, iFrame + 1, nFrame);
     }

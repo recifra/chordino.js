@@ -44,13 +44,14 @@ class ChordProcessor extends AudioWorkletProcessor {
     this.bufferSize = 4096;
     this.lastChord = undefined;
     this.lastChangeTimeMs = Math.trunc(currentTime * 1000);
-    // Skip decoding near-silent/noise-floor buffers entirely instead of letting
-    // the matcher try to fit noise to a chord template.
+    // Don't report while the input is near-silent, so the matcher's best fit to
+    // the noise floor is never shown as a chord.
     this.silenceRmsThreshold = 0.01;
-    // Keep enough history for the HMM/Viterbi smoothing to stabilize, but bounded
-    // so cost per getPartialResult() call doesn't grow for the whole session.
-    this.resetIntervalMs = 3000;
-    this.lastResetTimeMs = this.lastChangeTimeMs;
+    // How much audio each read decodes: enough for the HMM/Viterbi smoothing to
+    // settle, bounded so the cost per getPartialResult() call stays flat however
+    // long the session runs.
+    this.windowMs = 10000;
+    this.bufferStartMs = 0;
     this.audioBuffer = new Float32Array(this.bufferSize);
     this.port.onmessage = this.handleMessage.bind(this);
     this.ready = loadChordino(options?.processorOptions?.wasmBinary).then(
@@ -89,6 +90,9 @@ class ChordProcessor extends AudioWorkletProcessor {
       const currentTimeMs = Math.trunc(currentTime * 1000);
 
       // Accumulate data
+      if (this.bufferIndex === 0) {
+        this.bufferStartMs = currentTime * 1000;
+      }
       const toCopy = Math.min(channelData.length, this.bufferSize - this.bufferIndex);
       this.audioBuffer.set(channelData.subarray(0, toCopy), this.bufferIndex);
       this.bufferIndex += toCopy;
@@ -100,19 +104,17 @@ class ChordProcessor extends AudioWorkletProcessor {
         }
         const rms = Math.sqrt(sumSq / this.bufferSize);
 
-        if (rms < this.silenceRmsThreshold) {
-          // Nothing worth analyzing: don't feed noise into the matcher.
-        } else {
-          // Process the full buffer
-          this.module.HEAPF32.set(this.audioBuffer, this.pBuffer >> 2);
+        // Every buffer goes in, quiet ones too, as in the offline extraction:
+        // leaving one out would splice the audio around it and put Chordino's
+        // clock behind currentTime.
+        this.module.HEAPF32.set(this.audioBuffer, this.pBuffer >> 2);
+        this.module.processBuffer(this.instance, this.pBuffer, Math.trunc(this.bufferStartMs));
 
-          // Process data
-          this.module.processBuffer(this.instance, this.pBuffer, currentTimeMs);
-
-          // Read back the results (re-decodes the whole buffered history each call,
-          // so it must stay bounded by periodic resets below). Not getResult: that
-          // one is for the end of the audio, and pads what is still buffered with
-          // zeros the next buffers would then follow.
+        if (rms >= this.silenceRmsThreshold) {
+          // Read back the results, re-decoding the last windowMs each call. Not
+          // getResult: that one is for the end of the audio, and pads what is
+          // still buffered with zeros the next buffers would then follow.
+          this.module.forgetBefore(this.instance, currentTimeMs - this.windowMs);
           const chordList = this.module.getPartialResult(this.instance);
 
           // The last segment can still be revised as more frames arrive, so treat
@@ -127,13 +129,6 @@ class ChordProcessor extends AudioWorkletProcessor {
               this.lastChangeTimeMs = currentTimeMs;
               this.port.postMessage({ type: 'chordResult', result: chordItem });
             }
-          }
-
-          // Bound how much history getPartialResult() has to re-decode: reset periodically
-          // instead of every chunk, so there's still enough context to smooth.
-          if (currentTimeMs - this.lastResetTimeMs > this.resetIntervalMs) {
-            this.module.resetProcess(this.instance);
-            this.lastResetTimeMs = currentTimeMs;
           }
         }
         // Reset buffer for next chunk (no overlap for simplicity)

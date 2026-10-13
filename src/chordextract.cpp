@@ -150,6 +150,13 @@ emscripten::val getPartialResult(uintptr_t lpSession) {
     return toChordList(fs, chordOutput(chordino));
 }
 
+// Forgets the frames from before the given time (in the clock processBuffer was
+// given), so getPartialResult decodes a bounded window however long the audio
+// goes on. The tuning estimate still counts them.
+void forgetBefore(uintptr_t lpSession, long milliseconds) {
+    reinterpret_cast<Session*>(lpSession)->chordino->forgetFramesBefore(milliseconds / 1000.0);
+}
+
 EMSCRIPTEN_BINDINGS(chordextract) {
     emscripten::function("initializePlugin", &initializePlugin);
     emscripten::function("releasePlugin", &releasePlugin);
@@ -157,5 +164,6 @@ EMSCRIPTEN_BINDINGS(chordextract) {
     emscripten::function("processBuffer", &processBuffer);
     emscripten::function("getResult", &getResult);
     emscripten::function("getPartialResult", &getPartialResult);
+    emscripten::function("forgetBefore", &forgetBefore);
     emscripten::function("setProgressCallback", &setProgressCallback);
 }
