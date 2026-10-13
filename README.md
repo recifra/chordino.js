@@ -1,8 +1,8 @@
 # chordino.js
 
 Chord detection in the browser: Chordino, the chord estimation plugin from
-Matthias Mauch's NNLS Chroma Vamp plugins, compiled to WebAssembly, with two
-ways to run it:
+Matthias Mauch's NNLS Chroma Vamp plugins, ported to C and compiled to
+WebAssembly, with two ways to run it:
 
 - **Whole recordings**, in a Web Worker: hand it the samples, get back the
   chords with their start times, and progress while it works.
@@ -40,7 +40,7 @@ cp node_modules/chordino.js/build/*.mjs node_modules/chordino.js/build/*.wasm pu
 ```
 
 Or load them from a CDN that mirrors npm, such as
-`https://cdn.jsdelivr.net/npm/chordino.js@0.2.0/build/`. A worker from another
+`https://cdn.jsdelivr.net/npm/chordino.js@0.2.1/build/`. A worker from another
 origin needs the shim shown below. With Vite there is nothing to copy: see
 [With Vite](#with-vite).
 
