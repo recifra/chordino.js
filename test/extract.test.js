@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, test } from 'node:test';
 
-import { concat, decodeMp3, detectChords, loadChordino, paths, synthChord } from './helpers.js';
+import { concat, decodeMp3, detectChords, detectPartial, loadChordino, paths, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
 
@@ -106,6 +106,16 @@ describe('offline extraction', () => {
     const count = reports.length;
     detectChords(chordino, samples, sampleRate);
     assert.equal(reports.length, count, 'null turns the reports off');
+  });
+
+  test('getPartialResult can be read while feeding without changing what follows', async () => {
+    const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
+    const once = detectPartial(chordino, samples, sampleRate);
+    const everyBuffer = detectPartial(chordino, samples, sampleRate, { whileFeeding: true });
+
+    assert.deepEqual(everyBuffer, once);
+    // getResult only adds the frames of the zeros it pads the last samples with
+    assert.deepEqual(labels(once), labels(detectChords(chordino, samples, sampleRate)));
   });
 
   test('resetProcess drops the audio fed before it', () => {

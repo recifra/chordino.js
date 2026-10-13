@@ -6,6 +6,7 @@
 #include "vamp-hostsdk/PluginBufferingAdapter.h"
 
 #include "nnls-chroma/ChordinoInspect.h"
+#include "session.h"
 
 #include <string>
 #include <vector>
@@ -98,8 +99,8 @@ void chordinoInspectFrame(double time,
     collected.gate.push_back(gate);
 }
 
-emscripten::val getAnalysis(uintptr_t lpAdapter) {
-    auto *adapter = reinterpret_cast<PluginBufferingAdapter*>(lpAdapter);
+emscripten::val getAnalysis(uintptr_t lpSession) {
+    auto *adapter = reinterpret_cast<Session*>(lpSession)->adapter;
     int chordFeatureNo = -1;
     Plugin::OutputList outputs = adapter->getOutputDescriptors();
     for (int i = 0; i < int(outputs.size()); ++i)

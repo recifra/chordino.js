@@ -64,8 +64,11 @@ function mixDown(channels) {
   return mono;
 }
 
-/** Same feeding loop as src/js/chord-worker.mjs; `read` gets the instance once everything is fed. */
-function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 4096, instance } = {}) {
+/**
+ * Same feeding loop as src/js/chord-worker.mjs; `read` gets the instance once
+ * everything is fed, and `afterEach` after every buffer, if given.
+ */
+function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 4096, instance, afterEach } = {}) {
   const pBuffer = Module._malloc(bufferSize * Float32Array.BYTES_PER_ELEMENT);
   const ownInstance = instance === undefined;
   if (ownInstance) {
@@ -78,6 +81,7 @@ function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 409
       block.set(samples.subarray(offset, offset + bufferSize));
       heapF32().set(block, pBuffer >> 2);
       Module.processBuffer(instance, pBuffer, Math.trunc((offset / sampleRate) * 1000));
+      afterEach?.(instance);
     }
     return read(instance);
   } finally {
@@ -90,6 +94,15 @@ function feed({ Module, heapF32 }, samples, sampleRate, read, { bufferSize = 409
 
 export function detectChords(chordino, samples, sampleRate, options) {
   return feed(chordino, samples, sampleRate, (instance) => chordino.Module.getResult(instance), options);
+}
+
+/**
+ * Like detectChords, but reads with getPartialResult, the way the realtime
+ * worklet does: after every buffer too when `whileFeeding` is set.
+ */
+export function detectPartial(chordino, samples, sampleRate, { whileFeeding = false, ...options } = {}) {
+  const read = (instance) => chordino.Module.getPartialResult(instance);
+  return feed(chordino, samples, sampleRate, read, { ...options, afterEach: whileFeeding ? read : undefined });
 }
 
 /** Like detectChords, but through getAnalysis of the inspect build (examples/player). */

@@ -18,7 +18,10 @@ Everything lands in `build/`:
   `initializePlugin`, `processBuffer`, `getResult`, `resetProcess`,
   `releasePlugin`, `_malloc`, `_free` and `HEAPF32`. `getResult` does nearly
   all of the work in one call, so `setProgressCallback(fn)` has it call `fn`
-  with its progress (0 to 1) while it runs; `null` turns that off.
+  with its progress (0 to 1) while it runs; `null` turns that off. It is for
+  the end of the audio: it pads the samples still buffered with zeros. To read
+  while still feeding, as the worklet does, `getPartialResult` decodes the
+  frames so far and leaves the buffered samples alone.
 - `chord-worker.mjs` (from `src/js/`): module worker that detects the chords of
   a whole recording, posting its progress and then `{"timestamps": [[chord,
   seconds], ..., ["", end]]}`. `examples/extract/index.html` drives it,

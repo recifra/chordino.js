@@ -48,7 +48,7 @@ class ChordProcessor extends AudioWorkletProcessor {
     // the matcher try to fit noise to a chord template.
     this.silenceRmsThreshold = 0.01;
     // Keep enough history for the HMM/Viterbi smoothing to stabilize, but bounded
-    // so cost per getResult() call doesn't grow for the whole session.
+    // so cost per getPartialResult() call doesn't grow for the whole session.
     this.resetIntervalMs = 3000;
     this.lastResetTimeMs = this.lastChangeTimeMs;
     this.audioBuffer = new Float32Array(this.bufferSize);
@@ -110,8 +110,10 @@ class ChordProcessor extends AudioWorkletProcessor {
           this.module.processBuffer(this.instance, this.pBuffer, currentTimeMs);
 
           // Read back the results (re-decodes the whole buffered history each call,
-          // so it must stay bounded by periodic resets below)
-          const chordList = this.module.getResult(this.instance);
+          // so it must stay bounded by periodic resets below). Not getResult: that
+          // one is for the end of the audio, and pads what is still buffered with
+          // zeros the next buffers would then follow.
+          const chordList = this.module.getPartialResult(this.instance);
 
           // The last segment can still be revised as more frames arrive, so treat
           // the second-to-last one as the confirmed/stable reading. Ignore it when
@@ -127,7 +129,7 @@ class ChordProcessor extends AudioWorkletProcessor {
             }
           }
 
-          // Bound how much history getResult() has to re-decode: reset periodically
+          // Bound how much history getPartialResult() has to re-decode: reset periodically
           // instead of every chunk, so there's still enough context to smooth.
           if (currentTimeMs - this.lastResetTimeMs > this.resetIntervalMs) {
             this.module.resetProcess(this.instance);
