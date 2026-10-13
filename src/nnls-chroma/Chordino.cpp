@@ -408,7 +408,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         Three different kinds of chromagram are calculated, "treble", "bass", and "both" (which means
         bass and treble stacked onto each other).
     **/
-    vector<vector<double> > chordogram;
+    vector<double> chordogram; // nFrame rows of nChord saliences
     vector<float> &chordchange = c->harmonicChange;
     chordchange.assign(nFrame, 0);
     count = nCached;
@@ -597,7 +597,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         if (!confident) {
             // Nothing fits well enough to call, so shift the weight onto N rather than
             // reporting the least-bad guess. Damp the others instead of zeroing them:
-            // ViterbiPath multiplies these observations directly and the harmonic
+            // viterbi_path multiplies these observations directly and the harmonic
             // change feature divides by them, so a hard zero would poison both. Keeping
             // it a distribution also lets the Viterbi override a single gated frame
             // when the surrounding context is strong.
@@ -612,7 +612,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
                 }
             }
         }
-        chordogram.push_back(currentChordSalience);
+        chordogram.insert(chordogram.end(), currentChordSalience.begin(), currentChordSalience.end());
 #ifdef CHORDINO_INSPECT
         int gate = 0;
         if (!(rawChordValue[bestChord] > minChordVsNoChord * rawChordValue[nChord-1])) gate = 1;
@@ -641,14 +641,13 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     double *delta;
     delta = (double *)malloc(sizeof(double)*nFrame*nChord);
 
-    vector<vector<double> > trans;
+    vector<double> trans(nChord * nChord, (1-selftransprob)/(nChord-1));
     for (int iChord = 0; iChord < nChord; iChord++) {
-        vector<double> temp = vector<double>(nChord,(1-selftransprob)/(nChord-1));
-        temp[iChord] = selftransprob;
-        trans.push_back(temp);
+        trans[iChord * nChord + iChord] = selftransprob;
     }
-    vector<double> scale;
-    vector<int> chordpath = ViterbiPath(init, trans, chordogram, delta, &scale);
+    vector<double> scale(nFrame);
+    vector<int> chordpath(nFrame);
+    viterbi_path(nChord, nFrame, init.data(), trans.data(), chordogram.data(), delta, scale.data(), chordpath.data());
 
     auto prepareChordNotes = [&](int iFrame) {
         for (int iNote = 0; iNote < (int)c->chordnotes[chordpath[iFrame]].size(); ++iNote) { // prepare notes of current chord

@@ -8,7 +8,7 @@
 
   Centre for Digital Music, Queen Mary University of London.
   This file copyright 2008-2010 Matthias Mauch and QMUL.
-    
+
   This program is free software; you can redistribute it and/or
   modify it under the terms of the GNU General Public License as
   published by the Free Software Foundation; either version 2 of the
@@ -19,10 +19,21 @@
 #ifndef _VITERBI_H_
 #define _VITERBI_H_
 
-#include <vector>
-#include <string>
-using namespace std;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-extern std::vector<int> ViterbiPath(const std::vector<double> &init, const std::vector<vector<double> > &trans, const std::vector<vector<double> > &obs, double *delta, vector<double> *scale);
+// The most likely path through nState states over nFrame frames, given the
+// initial probabilities init[nState], the transition probabilities
+// trans[from * nState + to] and the observations obs[frame * nState + state].
+// Writes the forward probabilities, scaled to sum to 1 in every frame, to
+// delta[frame * nState + state], the scale of each frame to scale[nFrame] and
+// the path to path[nFrame].
+void viterbi_path(int nState, int nFrame, const double *init, const double *trans,
+                  const double *obs, double *delta, double *scale, int *path);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
