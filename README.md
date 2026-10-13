@@ -1,4 +1,4 @@
-# chordino-wasm
+# chordino.js
 
 Chord detection in the browser: Chordino, the chord estimation plugin from
 Matthias Mauch's NNLS Chroma Vamp plugins, compiled to WebAssembly, with two
@@ -12,10 +12,13 @@ ways to run it:
 Both share one `chordino.wasm` and run with no server: everything happens in the
 page.
 
-## What ships
+## Install
 
-`npm run build` writes these to `build/`. An app serves the four of them together,
-from one directory:
+```sh
+npm install chordino.js
+```
+
+The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
@@ -23,9 +26,21 @@ from one directory:
 | `chordino.mjs` | 15 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-processor.mjs` | 3 KB | AudioWorklet processor for live input |
+| `chordino.d.mts` | 2 KB | Types of `chordino.mjs` |
 
-`build/inspect/chordino-inspect.js` is a separate debug build for the examples;
-apps don't ship it.
+The worker and the worklet are started from a URL, not imported, and each loads
+`chordino.mjs` from next to itself, which loads `chordino.wasm` the same way. So
+an app serves those four files together, from one directory; copy them into its
+static assets as part of its build:
+
+```sh
+mkdir -p public/chordino
+cp node_modules/chordino.js/build/*.mjs node_modules/chordino.js/build/*.wasm public/chordino/
+```
+
+Or load them from a CDN that mirrors npm, such as
+`https://cdn.jsdelivr.net/npm/chordino.js@0.1.0/build/`. A worker from another
+origin needs the shim shown below.
 
 ## Usage
 
@@ -35,7 +50,7 @@ Decode and mix down to mono on the main thread (workers have no `AudioContext`),
 then post the samples:
 
 ```js
-const lib = new URL('/lib/chordino/', location.href); // where the files above live
+const lib = new URL('/chordino/', location.href); // where the files above are served
 
 const worker = new Worker(new URL('chord-worker.mjs', lib), { type: 'module' });
 worker.onmessage = ({ data }) => {
@@ -121,11 +136,19 @@ the same audio: about 95% of the time at 0 ms, 99% at 1000 ms.
 
 ### The module itself
 
-`chordino.mjs` can also be used directly, for example in Node or in a worker of
-your own. Its default export `createChordino()` resolves to a module with
-`initializePlugin`, `processBuffer`, `getResult`, `getPartialResult`,
-`forgetBefore` and a few more; [BUILD.md](BUILD.md) describes them and
-[src/js/chordino.d.mts](src/js/chordino.d.mts) has their types.
+`chordino.mjs` is the package's main entry, for use in Node or in a worker of
+your own:
+
+```js
+import createChordino from 'chordino.js';
+
+const Module = await createChordino(); // loads chordino.wasm from next to chordino.mjs
+const instance = Module.initializePlugin(sampleRate, 4096);
+```
+
+The module has `initializePlugin`, `processBuffer`, `getResult`,
+`getPartialResult`, `forgetBefore` and a few more; [BUILD.md](BUILD.md)
+describes them and the package carries their types.
 [src/js/chord-worker.ts](src/js/chord-worker.ts) is a short example of the
 feeding loop.
 
@@ -148,7 +171,7 @@ python3 -m http.server -d examples
 
 ## Building and testing
 
-You need emsdk, a checkout of the
+From a clone of this repository. You need emsdk, a checkout of the
 [Vamp plugin SDK](https://github.com/vamp-plugins/vamp-plugin-sdk) and Node.js:
 
 ```sh
@@ -177,9 +200,9 @@ npm test
 NNLS Chroma and Chordino are by Matthias Mauch, Centre for Digital Music, Queen
 Mary University of London, and are licensed under the GNU General Public License,
 version 2 or later (see [src/nnls-chroma/COPYING](src/nnls-chroma/COPYING)). The
-modules in `build/` are compiled from that code, so the same terms apply to them.
-The Vamp plugin SDK is by Chris Cannam and Queen Mary University of London, under
-a BSD-style license.
+modules in `build/` are compiled from that code, so chordino.js is distributed
+under the same license (see [LICENSE](LICENSE)). The Vamp plugin SDK is by
+Chris Cannam and Queen Mary University of London, under a BSD-style license.
 
 If you use Chordino in research, please cite:
 

@@ -1,4 +1,4 @@
-# Building chordino-wasm
+# Building chordino.js
 
 ## Requirements
 - emsdk (`emcc` on the PATH)
@@ -18,9 +18,10 @@ npm run build
 
 - `npm run build:wasm` compiles the C++ with `emcc`; the commands and flags are
   in `src/build.sh`. Needs `VAMP_PATH`.
-- `npm run build:js` type-checks the TypeScript in `src/js/` (`tsc -b src/js`)
-  and has esbuild minify it into ES modules. It needs no `emcc`, so after a
-  change to the worker or the worklet alone this is the one to run.
+- `npm run build:js` type-checks the TypeScript in `src/js/` (`tsc -b src/js`),
+  has esbuild minify it into ES modules and copies `src/js/chordino.d.mts`
+  next to them. It needs no `emcc`, so after a change to the worker or the
+  worklet alone this is the one to run.
 
 Everything lands in `build/`:
 
@@ -46,8 +47,9 @@ Everything lands in `build/`:
 - `chord-processor.mjs` (from `src/js/chord-processor.ts`): AudioWorklet for
   the microphone. Worklets cannot fetch, so the page passes the wasm bytes in
   `processorOptions.wasmBinary`; see `examples/realtime/index.html`.
+- `chordino.d.mts`: the types of `chordino.mjs`, for the package.
 - `inspect/chordino-inspect.js`: inspection build for `examples/player`, see
-  below. Not for apps.
+  below. Not for apps, and not in the package.
 
 An app ships the four files at the top of `build/` together, in one directory.
 The worker and the worklet share the one `.wasm` (15 KB + 273 KB; the old
@@ -85,4 +87,17 @@ Run from the repository root. They load the files in `build/`, so build first.
 
 ```sh
 npm test
+```
+
+## Publishing
+The npm package is `chordino.js`. Its contents are the `files` listed in
+`package.json` (the four files an app ships, plus `chordino.d.mts`) along with
+`README.md` and `LICENSE`; `exports` maps `chordino.js` to `chordino.mjs`, and
+`chordino.js/chord-worker.mjs`, `chordino.js/chord-processor.mjs` and
+`chordino.js/chordino.wasm` to the files in `build/`. `npm publish` first runs
+`prepublishOnly`, a full build and the tests, so it needs everything `npm run
+build` does. To see what would go out:
+
+```sh
+npm pack --dry-run
 ```

@@ -1,4 +1,4 @@
-// Types of build/chordino.mjs, the module src/build.sh compiles; the bindings are
+// Types of chordino.mjs, the module src/build.sh compiles; the bindings are
 // at the end of src/chordextract.cpp. Pointers into the wasm heap and plugin
 // instances are plain numbers.
 
