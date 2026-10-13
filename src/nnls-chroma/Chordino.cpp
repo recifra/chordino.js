@@ -44,7 +44,7 @@ using namespace std;
 const float whitening = 1.0;
 const float sParam = 0.7;
 const float boostN = 0.1;
-const float harteSyntax = 0;
+const bool harteSyntax = false;
 // Where each stage of chordino_decode ends on the 0-1 scale progress reports,
 // in proportion to the time it takes (measured on a 5 minute song) so the
 // progress moves at a steady pace: tuning, NNLS chroma (nearly all of it), chord
@@ -115,9 +115,7 @@ struct chordino {
     vector<float> hw;
     vector<float> sinvalues;
     vector<float> cosvalues;
-    vector<float> chorddict;
-    vector<vector<int> > chordnotes;
-    vector<string> chordnames;
+    chord_dictionary_t *dictionary;
     // Raw stacked (bass, treble) chroma of the first frames of logSpectrum,
     // kept between chordino_decode calls so a caller decoding again and again
     // pays the NNLS of each frame once; those frames keep the tuning estimated
@@ -139,7 +137,7 @@ chordino_t *chordino_create(float sampleRate) {
     c->dict = new float[nNote * 84];
     for (int i = 0; i < nNote * 84; ++i) c->dict[i] = 0.0;
 
-	dictionaryMatrix(c->dict, sParam);
+	dictionary_matrix(c->dict, sParam);
 
 	// make things for tuning estimation
 	for (int iBPS = 0; iBPS < nBPS; ++iBPS) {
@@ -171,7 +169,7 @@ chordino_t *chordino_create(float sampleRate) {
 
     tempkernel = new float[tempn];
 
-    logFreqMatrix(c->inputSampleRate, c->blockSize, tempkernel);
+    log_freq_matrix(c->inputSampleRate, c->blockSize, tempkernel);
     for (int iNote = 0; iNote < nNote; ++iNote) { // I don't know if this is wise: manually making a sparse matrix
         for (int iFFT = 0; iFFT < static_cast<int>(blockSize/2); ++iFFT) {
             if (tempkernel[iFFT + blockSize/2 * iNote] > 0) {
@@ -183,11 +181,12 @@ chordino_t *chordino_create(float sampleRate) {
     }
     delete [] tempkernel;
 
-    c->chordnames = chordDictionary(&c->chorddict, &c->chordnotes, boostN, harteSyntax);
+    c->dictionary = chord_dictionary_create(boostN, harteSyntax);
     return c;
 }
 
 void chordino_destroy(chordino_t *c) {
+    chord_dictionary_destroy(c->dictionary);
     delete [] c->dict;
     delete c;
 }
@@ -269,7 +268,8 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     c->logLikelihood.clear();
     c->result = chordino_result_t();
     if (c->logSpectrum.size() == 0) return &c->result;
-    int nChord = c->chordnames.size();
+    int nChord = c->dictionary->size;
+    const float *chorddict = c->dictionary->templates;
 
     // Reports frame of nFrame through a stage spanning from-to on the 0-1 scale
     auto report = [progress](double from, double to, int frame, int nFrame) {
@@ -319,11 +319,11 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         double trebleSumSq = 0;
         int noteCount = 0;
         for (int iBin = 0; iBin < 12; iBin++) {
-            double v = c->chorddict[24 * iChord + iBin];
+            double v = chorddict[24 * iChord + iBin];
             bassSumSq += v * v;
         }
         for (int iBin = 12; iBin < 24; iBin++) {
-            double v = c->chorddict[24 * iChord + iBin];
+            double v = chorddict[24 * iChord + iBin];
             trebleSumSq += v * v;
             if (v > 0) noteCount++;
         }
@@ -381,12 +381,14 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         }
 
         currentTunedSpec.push_back(0.0); currentTunedSpec.push_back(0.0); currentTunedSpec.push_back(0.0); // upper edge
-        vector<float> runningmean = SpecialConvolution(currentTunedSpec,c->hw);
-        vector<float> runningstd;
+        vector<float> runningmean(nNote);
+        special_convolution(currentTunedSpec.data(), c->hw.data(), c->hw.size(), runningmean.data());
+        vector<float> variance;
         for (int i = 0; i < nNote; i++) { // first step: squared values into vector (variance)
-            runningstd.push_back((currentTunedSpec[i] - runningmean[i]) * (currentTunedSpec[i] - runningmean[i]));
+            variance.push_back((currentTunedSpec[i] - runningmean[i]) * (currentTunedSpec[i] - runningmean[i]));
         }
-        runningstd = SpecialConvolution(runningstd,c->hw); // second step convolve
+        vector<float> runningstd(nNote);
+        special_convolution(variance.data(), c->hw.data(), c->hw.size(), runningstd.data()); // second step convolve
         for (int i = 0; i < nNote; i++) {
             runningstd[i] = sqrt(runningstd[i]); // square root to finally have running std
             if (runningstd[i] > 0) {
@@ -417,7 +419,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 
 #ifdef CHORDINO_INSPECT
     vector<vector<float> > inspectSemitones;
-    chordinoInspectBegin(c->chordnames);
+    chordinoInspectBegin(vector<string>(c->dictionary->names, c->dictionary->names + nChord));
 #endif
 
     for (vector<vector<float> >::iterator it = tunedSpec.begin(); it != tunedSpec.end(); ++it) {
@@ -535,10 +537,10 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
             double bassMatch = 0;
             double trebleMatch = 0;
             for (int iBin = 0; iBin < 12; iBin++) {
-                bassMatch += c->chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
+                bassMatch += chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
             for (int iBin = 12; iBin < 24; iBin++) {
-                trebleMatch += c->chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
+                trebleMatch += chorddict[24 * iChord + iBin] * smoothedChroma[iBin];
             }
             tempchordvalue = trebleMatch / trebleNorm[iChord]
                 + bassWeight * bassMatch / bassNorm[iChord];
@@ -559,7 +561,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         }
 
         // Chords are laid out as [type][root] with 12 roots per type (see
-        // chordDictionary), so a candidate's root is simply its index mod 12, and the
+        // chord_dictionary_create), so a candidate's root is simply its index mod 12, and the
         // last entry is the no-chord hypothesis N.
         int bestChord = 0;
         for (int iChord = 1; iChord < nChord - 1; iChord++) {
@@ -577,7 +579,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
             if (iChord % 12 == bestChord % 12) continue;
             int sharedNotes = 0;
             for (int iBin = 12; iBin < 24; iBin++) {
-                if (c->chorddict[24 * iChord + iBin] > 0 && c->chorddict[24 * bestChord + iBin] > 0) sharedNotes++;
+                if (chorddict[24 * iChord + iBin] > 0 && chorddict[24 * bestChord + iBin] > 0) sharedNotes++;
             }
             if (sharedNotes >= 2) continue;
             if (rawChordValue[iChord] > bestRivalRoot) bestRivalRoot = rawChordValue[iChord];
@@ -650,16 +652,17 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     viterbi_path(nChord, nFrame, init.data(), trans.data(), chordogram.data(), delta, scale.data(), chordpath.data());
 
     auto prepareChordNotes = [&](int iFrame) {
-        for (int iNote = 0; iNote < (int)c->chordnotes[chordpath[iFrame]].size(); ++iNote) { // prepare notes of current chord
+        const chord_dictionary_t *d = c->dictionary;
+        for (int iNote = d->noteStart[chordpath[iFrame]]; iNote < d->noteStart[chordpath[iFrame] + 1]; ++iNote) { // prepare notes of current chord
             chordino_note_t note;
-            note.midi = c->chordnotes[chordpath[iFrame]][iNote];
+            note.midi = d->notes[iNote];
             note.time = timestamps[iFrame];
             note.duration = realtime_negate(timestamps[iFrame]); // this will be corrected at the next chord
             oldnotes.push_back(note);
         }
     };
 
-    c->chords.push_back({c->chordnames[chordpath[0]].c_str(), timestamps[0]});
+    c->chords.push_back({c->dictionary->names[chordpath[0]], timestamps[0]});
     // With the uniform prior the path no longer always starts on N, so track the first
     // chord as already emitted; otherwise it is reported again at the second frame.
     int oldchord = chordpath[0];
@@ -669,7 +672,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     for (int iFrame = 1; iFrame < (int)chordpath.size(); ++iFrame) {
         if (chordpath[iFrame] != oldchord ) {
             // chord
-            c->chords.push_back({c->chordnames[chordpath[iFrame]].c_str(), timestamps[iFrame]});
+            c->chords.push_back({c->dictionary->names[chordpath[iFrame]], timestamps[iFrame]});
             oldchord = chordpath[iFrame];
             // chord notes
             for (int iNote = 0; iNote < (int)oldnotes.size(); ++iNote) { // finish duration of old chord

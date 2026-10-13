@@ -8,7 +8,7 @@ set -e
 cd "$(dirname "$0")"
 
 OUT=../build
-SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/chromamethods.cpp nnls-chroma/viterbi.c
+SOURCES="nnls-chroma/Chordino.cpp nnls-chroma/chromamethods.c nnls-chroma/viterbi.c
     nnls-chroma/nnls.c session.c spectrum.c window.c kissfft.c realtime.c
     chordextract.c"
 # Nothing of the Vamp SDK: session.c and spectrum.c do what its host adapters
