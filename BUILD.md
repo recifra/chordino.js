@@ -95,7 +95,10 @@ and `getPartialAnalysis` for reading while still feeding audio, which
 `examples/lib` and `examples/player/chordino-inspect.js` are symlinks into
 `build/`, so build first. Serve `examples/` (e.g. `python3 -m http.server -d
 examples`), open `/player/` and drop an audio file on the page, or `/realtime/`
-and start listening; `/extract/` tries the production build alone.
+and start listening; `/extract/` tries the production build alone. To listen
+from another device, `npm run examples` (`examples/serve.mjs`, no
+dependencies) serves them over https with a self-signed certificate kept in
+`.cert/`.
 `examples/vite-react` is a separate Vite app that installs the repository as
 its `chordino.js` dependency; see its README.
 

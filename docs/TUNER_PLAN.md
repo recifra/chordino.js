@@ -203,11 +203,11 @@ Controls:
 
 It has to fit a phone or tablet held upright. The microphone needs a secure
 context, which `http://<computer's IP>:8000` is not (the page says so instead
-of failing on `navigator.mediaDevices`). On the Android tablet, either connect
-it by USB and open `http://localhost:8000/tuner/` after
-`adb reverse tcp:8000 tcp:8000`, or add `http://<computer's IP>:8000` to
-`chrome://flags/#unsafely-treat-insecure-origin-as-secure` and relaunch
-Chrome.
+of failing on `navigator.mediaDevices`). `npm run examples` serves
+`examples/` over https on 8000 with a self-signed certificate: open
+`https://<computer's IP>:8000/tuner/` and go on past the warning, on Android
+and iOS alike. Without it, Android can use `adb reverse` and localhost, or
+`chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
 
 ## Steps
 

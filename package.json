@@ -55,6 +55,7 @@
     "build:wasm": "bash src/build.sh",
     "build:js": "tsc -b src/js && esbuild src/js/chord-worker.ts src/js/chord-live-worker.ts src/js/chord-processor.ts src/js/tuner-live-worker.ts --outdir=build --out-extension:.js=.mjs --format=esm --target=es2022 --minify && cp src/js/chordino.d.mts build/",
     "test": "node --test \"test/*.test.js\"",
+    "examples": "node examples/serve.mjs",
     "prepublishOnly": "npm run build && npm test"
   },
   "devDependencies": {

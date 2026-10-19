@@ -6,3 +6,4 @@ training
 src/chordino-inspect.js
 build
 *.tsbuildinfo
+.cert

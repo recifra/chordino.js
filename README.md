@@ -210,6 +210,12 @@ Build first, then serve the directory and open one of them:
 python3 -m http.server -d examples
 ```
 
+From a phone or tablet, the microphone needs https (browsers only give it to
+https and localhost pages). `npm run examples` serves the same files over
+https on port 8000 (`PORT=` picks another), with a self-signed certificate it
+makes on the first run (in `.cert/`), and prints the addresses to open; each
+device asks once to go on past the warning.
+
 - `vite-react/`: a React and Vite app with a hook for whole recordings and one
   for live input. It runs on its own; [its README](examples/vite-react/README.md) has
   the steps.
