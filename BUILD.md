@@ -37,7 +37,8 @@ Everything lands in `build/`:
 - `chordino.mjs` + `chordino.wasm`: the production module, an ES module whose
   default export `createChordino()` resolves to the module with
   `initializePlugin`, `processBuffer`, `getResult`, `resetProcess`,
-  `releasePlugin`, `_malloc`, `_free` and `HEAPF32`. `getResult` does nearly
+  `releasePlugin`, the tuner's `createPitch`, `detectPitch`, `pitchRms` and
+  `releasePitch`, `_malloc`, `_free` and `HEAPF32`. `getResult` does nearly
   all of the work in one call, so `setProgressCallback(fn)` has it call `fn`
   with its progress (0 to 1) while it runs; `null` turns that off. It is for
   the end of the audio: it pads the samples still buffered with zeros. To read
@@ -48,6 +49,11 @@ Everything lands in `build/`:
   `initializePlugin(sampleRate, blockSize, true)` gets each frame out as soon
   as its audio is in, half a block (186 ms at 44.1 kHz) sooner, at the cost of
   the first few frames, so the chords start that much after 0.
+  `createPitch(sampleRate, size)` is the `pitch_t` of `src/pitch.c`: YIN over
+  windows of `size` samples (even), with the difference function from a
+  cross-correlation through KISS FFT, as `pitch_create`, `pitch_detect`,
+  `pitch_rms` and `pitch_destroy` in C. It keeps nothing between windows and
+  needs nothing of emscripten, so a native build can compile it as is.
 - `chord-worker.mjs` (from `src/js/chord-worker.ts`): module worker that
   detects the chords of a whole recording, posting its progress and then
   `{"timestamps": [[chord, seconds], ..., ["", end]]}`.
@@ -60,14 +66,20 @@ Everything lands in `build/`:
   over a `MessageChannel`. It only copies: decoding on the audio thread overran
   its render quanta, and iOS then dropped microphone samples to catch up, which
   read everything about a semitone sharp. See `examples/realtime/index.html`.
+  `processorOptions.bufferSize` sets the buffer size, 4096 unless given.
+- `tuner-live-worker.mjs` (from `src/js/tuner-live-worker.ts`): module worker
+  that reads the pitch of the microphone from `chord-processor.mjs` in
+  buffers of 2048, for a tuner: YIN on the newest 4096 samples once per batch,
+  an RMS gate, 3 readings within 20 cents and the median of the last 5, and
+  the clock ratio with `clockReports`. See `examples/tuner/index.html`.
 - `chordino.d.mts`: the types of `chordino.mjs`, for the package.
 - `inspect/chordino-inspect.js`: inspection build for `examples/player`, see
   below. Not for apps, and not in the package.
 
-An app ships the five files at the top of `build/` together, in one directory.
-The two workers share the one `.wasm` (5 KB + 70 KB; the old single-file
+An app ships the six files at the top of `build/` together, in one directory.
+The three workers share the one `.wasm` (5 KB + 71 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
-2 and 1 KB of their own.
+2, 3 and 1 KB of their own.
 
 ## TypeScript
 The workers and the worklet run in different global scopes,
@@ -95,7 +107,8 @@ and `getPartialAnalysis` for reading while still feeding audio, which
 `examples/lib` and `examples/player/chordino-inspect.js` are symlinks into
 `build/`, so build first. Serve `examples/` (e.g. `python3 -m http.server -d
 examples`), open `/player/` and drop an audio file on the page, or `/realtime/`
-and start listening; `/extract/` tries the production build alone. To listen
+and start listening, or `/tuner/`; `/extract/` tries the production build
+alone. To listen
 from another device, `npm run examples` (`examples/serve.mjs`, no
 dependencies) serves them over https with a self-signed certificate kept in
 `.cert/`.

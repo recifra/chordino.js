@@ -6,13 +6,16 @@ own worklet, worker and detector.
 
 ## Status (2026-10-19)
 
-Steps 1 to 5 are done: `src/pitch.c`/`.h` and its exports,
-`processorOptions.bufferSize` in the worklet, `tuner-live-worker.mjs` with the
-clock report, `test/tuner.test.js` and `examples/tuner/`. The page was checked
-in desktop Chrome with an oscillator standing in for the microphone (in tune,
-19.6 cents sharp at 445 Hz, E1, silence, clock ratio 1.000); it still has to
-be tried on the tablet that stutters. Step 6 (README, BUILD.md, 0.3.0) is
-still to do.
+Steps 1 to 6 are done, as 0.3.0 (not yet published): `src/pitch.c`/`.h`
+and its exports, `processorOptions.bufferSize` in the worklet,
+`tuner-live-worker.mjs` with the clock report, `test/tuner.test.js`,
+`examples/tuner/` (served over https by `npm run examples`) and the docs.
+
+On the Android tablet that stutters, in Chrome rather than the Recifra app,
+the example read in tune, the reference tone included, with a clock ratio of
+1.000 to 1.001, from G0 to F6 (the guitar band cuts at 1200 Hz). So the
+WebView-free chain keeps up there; what is left to see is the app, with
+spessasynth playing, after the migration below with `clockReports` on.
 
 From 0.2.1, `build/chordino.wasm` went from 69,712 to 72,648 bytes (+2.9 KB)
 and `chordino.mjs` from 5,138 to 5,307. `detectPitch` takes 0.061 ms per

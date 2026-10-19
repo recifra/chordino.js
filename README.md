@@ -9,8 +9,12 @@ WebAssembly, with two ways to run it:
 - **Live input**, in an AudioWorklet that hands the microphone to a Web
   Worker: get each chord change as it happens.
 
-Both share one `chordino.wasm` and run with no server: everything happens in the
-page.
+Plus a **tuner**: the same AudioWorklet hands the microphone to another
+worker, which posts the pitch of the note being played about 23 times a
+second, with YIN.
+
+All of it shares one `chordino.wasm` and runs with no server: everything
+happens in the page.
 
 ## Install
 
@@ -22,16 +26,17 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 70 KB (37 KB gzipped) | Chordino, with KISS FFT |
+| `chordino.wasm` | 71 KB (37 KB gzipped) | Chordino and the tuner's YIN, with KISS FFT |
 | `chordino.mjs` | 5 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |
 | `chord-processor.mjs` | 1 KB | AudioWorklet processor that hands live input to it |
+| `tuner-live-worker.mjs` | 3 KB | Module worker that reads the pitch of live input, for a tuner |
 | `chordino.d.mts` | 2 KB | Types of `chordino.mjs` |
 
 The workers and the worklet are started from a URL, not imported. Each worker
 loads `chordino.mjs` from next to itself, which loads `chordino.wasm` the same
-way. So an app serves those five files together, from one directory; copy them
+way. So an app serves those six files together, from one directory; copy them
 into its static assets as part of its build:
 
 ```sh
@@ -40,7 +45,7 @@ cp node_modules/chordino.js/build/*.mjs node_modules/chordino.js/build/*.wasm pu
 ```
 
 Or load them from a CDN that mirrors npm, such as
-`https://cdn.jsdelivr.net/npm/chordino.js@0.2.1/build/`. A worker from another
+`https://cdn.jsdelivr.net/npm/chordino.js@0.3.0/build/`. A worker from another
 origin needs the shim shown below. With Vite there is nothing to copy: see
 [With Vite](#with-vite).
 
@@ -150,8 +155,62 @@ The worklet sends the worker every buffer gathered since the worker last
 replied, so a worker that falls behind, on a slow device, reads once for
 several buffers instead of lagging a little further with each one.
 
-Up to 0.1, the worklet ran Chordino itself and took the wasm bytes in
-`processorOptions.wasmBinary`; it now takes no options and posts nothing.
+The worklet gathers buffers of 4096 samples; `processorOptions.bufferSize`
+sets another size, as the tuner does. Up to 0.1, it ran Chordino itself and
+took the wasm bytes in `processorOptions.wasmBinary`; it posts nothing now.
+
+### Tuner (live input)
+
+The same worklet, in buffers of 2048 samples, feeds `tuner-live-worker.mjs`,
+which reads the pitch of the newest 4096 samples with YIN (`pitch.c`, in
+`chordino.wasm`):
+
+```js
+const context = new AudioContext({ latencyHint: 'playback' });
+const stream = await navigator.mediaDevices.getUserMedia({
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+});
+const worker = new Worker(new URL('tuner-live-worker.mjs', lib), { type: 'module' });
+await context.audioWorklet.addModule(new URL('chord-processor.mjs', lib));
+
+const node = new AudioWorkletNode(context, 'chord-processor', {
+  channelCount: 1,
+  channelCountMode: 'explicit',
+  channelInterpretation: 'discrete',
+  processorOptions: { bufferSize: 2048 },
+});
+worker.onmessage = ({ data }) => {
+  if (data.type === 'pitch') {
+    console.log(data.frequency, 'Hz at', data.time); // time on the context.currentTime clock
+  }
+};
+const { port1, port2 } = new MessageChannel();
+worker.postMessage({ type: 'start', sampleRate: context.sampleRate, port: port1 }, [port1]);
+node.port.postMessage({ type: 'port', port: port2 }, [port2]);
+context.createMediaStreamSource(stream).connect(node);
+node.connect(context.destination); // it outputs silence
+```
+
+The worker posts `{ type: 'ready' }`, `{ type: 'error', message }` and
+`{ type: 'stopped' }` as the chord worker does, and
+`{ type: 'pitch', frequency, time }` for every steady reading: `frequency` in
+Hz, `time` at the end of the window read, in seconds on the `AudioContext`
+clock. The note and how many cents off it is are left to the page.
+
+- It reads once per batch of buffers, on the newest window: a reading every
+  2048 samples, the windows overlapping by half, while it keeps up, and only
+  the newest when it falls behind.
+- Nothing is posted while the input is near-silent (RMS under 0.01), nor until
+  3 readings in a row agree within 20 cents. What is posted is the median of
+  the last 5 that did, so a lone window that lost samples, and reads sharp,
+  stays off it.
+- It reaches A0 (27.5 Hz) to C8 (4186 Hz) at 48 kHz, C8 about 5 cents sharp.
+  It listens to everything: to keep one instrument's band, put biquad filters
+  between the microphone and the worklet (the tuner example has some).
+- With `clockReports: true` in `start`, it also posts `{ type: 'clock', ratio }`
+  about every 5 s: the `AudioContext` time the buffers covered over the time
+  they took to come. Well under 1, the audio thread is falling behind, the
+  case in which samples go missing and pitch reads sharp.
 
 
 ### The module itself
@@ -167,7 +226,8 @@ const instance = Module.initializePlugin(sampleRate, 4096);
 ```
 
 The module has `initializePlugin`, `processBuffer`, `getResult`,
-`getPartialResult`, `forgetBefore` and a few more; [BUILD.md](BUILD.md)
+`getPartialResult`, `forgetBefore` and a few more, and the tuner's
+`createPitch`, `detectPitch`, `pitchRms` and `releasePitch`; [BUILD.md](BUILD.md)
 describes them and the package carries their types.
 [src/js/chord-worker.ts](src/js/chord-worker.ts) is a short example of the
 feeding loop.
@@ -181,9 +241,11 @@ emitting `chordino.wasm` as a hashed asset, so nothing needs copying:
 import ChordLiveWorker from 'chordino.js/chord-live-worker.mjs?worker';
 import ChordWorker from 'chordino.js/chord-worker.mjs?worker';
 import processorUrl from 'chordino.js/chord-processor.mjs?worker&url';
+import TunerLiveWorker from 'chordino.js/tuner-live-worker.mjs?worker';
 
 const worker = new ChordWorker(); // in place of new Worker(new URL('chord-worker.mjs', lib), ...)
 const liveWorker = new ChordLiveWorker(); // in place of new Worker(new URL('chord-live-worker.mjs', lib), ...)
+const tunerWorker = new TunerLiveWorker(); // in place of new Worker(new URL('tuner-live-worker.mjs', lib), ...)
 await context.audioWorklet.addModule(processorUrl);
 ```
 
@@ -194,7 +256,7 @@ a hook for each.
 
 ## Examples
 
-`examples/` has three pages that run on the build, and a React app:
+`examples/` has four pages that run on the build, and a React app:
 
 - `extract/`: detects the chords of an MP3 through the worker and offers them as
   JSON, the way an app would.
@@ -203,6 +265,8 @@ a hook for each.
   finds.
 - `realtime/`: the same from the microphone, through the production worklet
   and worker.
+- `tuner/`: a tuner on the microphone, through the worklet and the tuner
+  worker, with the clock ratio and a reference tone to read back.
 
 Build first, then serve the directory and open one of them:
 
@@ -238,6 +302,7 @@ npm test
 | --- | --- |
 | `src/nnls-chroma/` | The NNLS Chroma / Chordino plugin source, adapted for this build |
 | `src/chordino.h` | `chordino_t`: Chordino, as functions instead of a Vamp plugin |
+| `src/pitch.c`, `src/pitch.h` | `pitch_t`: the tuner's YIN, one window at a time |
 | `src/chordextract.c` | The C functions `chordino.mjs` calls |
 | `src/chordextract.js` | The API `chordino.mjs` exposes over them |
 | `src/session.c`, `src/session.h` | `session_t`: what feeds Chordino, buffering and frame times |
