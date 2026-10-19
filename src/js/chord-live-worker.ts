@@ -101,14 +101,25 @@ class Session {
   private lastChord: string | undefined;
   // Don't report what was read where the input is near-silent, so the
   // matcher's best fit to the noise floor is never shown as a chord.
-  private readonly silenceRmsThreshold = 0.01;
+  private readonly silenceRmsThreshold = 0.008;
+  // The level held against it is the sustained one: the lower quartile of the
+  // RMS of short slices within sustainMs either side of the point read. A chord
+  // rings on through the slices, but typing, taps and steps fall back to the
+  // floor between them, so they leave it at the floor however loud each one is.
+  // Against the RMS of whole buffers (and 0.01), a keyboard clattering went over
+  // the threshold, and the matcher, which only weighs the pitch classes against
+  // each other, read a faint hum under it as chords; and since a quartile sits
+  // under the RMS, the threshold came down, so that quiet playing still counts.
+  private readonly sliceSamples = 512;
+  private readonly sustainMs = 200;
+  private readonly sustainQuantile = 0.25;
   // How much audio each read decodes: enough for the HMM/Viterbi smoothing to
   // settle, bounded so the cost per getPartialResult() call stays flat however
   // long the session runs.
   private readonly windowMs = 10000;
-  // Quiet stretches of the input still in the window, as [startMs, endMs], and
-  // the end of the last buffer that was not quiet.
-  private readonly quietStretches: [startMs: number, endMs: number][] = [];
+  // The slices still in the window, oldest first, and the end of the last
+  // buffer that was not quiet.
+  private readonly slices: { startMs: number; rms: number }[] = [];
   private loudUntilMs = -Infinity;
 
   constructor(port: MessagePort, sampleRate: number, delayMs: number) {
@@ -171,21 +182,20 @@ class Session {
 
   private feed(module: ChordinoModule, instance: number, { samples, startMs, nowMs }: Block) {
     let sumSq = 0;
-    for (let i = 0; i < samples.length; i++) {
-      sumSq += samples[i] * samples[i];
+    for (let start = 0; start < samples.length; start += this.sliceSamples) {
+      const end = Math.min(start + this.sliceSamples, samples.length);
+      let sliceSumSq = 0;
+      for (let i = start; i < end; i++) {
+        sliceSumSq += samples[i] * samples[i];
+      }
+      sumSq += sliceSumSq;
+      this.slices.push({ startMs: startMs + (start / this.sampleRate) * 1000, rms: Math.sqrt(sliceSumSq / (end - start)) });
     }
-    const rms = Math.sqrt(sumSq / samples.length);
-    const endMs = startMs + (samples.length / this.sampleRate) * 1000;
-    const lastQuiet = this.quietStretches.at(-1);
-    if (rms >= this.silenceRmsThreshold) {
-      this.loudUntilMs = endMs;
-    } else if (lastQuiet && startMs - lastQuiet[1] < 1) {
-      lastQuiet[1] = endMs;
-    } else {
-      this.quietStretches.push([startMs, endMs]);
+    if (Math.sqrt(sumSq / samples.length) >= this.silenceRmsThreshold) {
+      this.loudUntilMs = startMs + (samples.length / this.sampleRate) * 1000;
     }
-    while (this.quietStretches[0]?.[1] < nowMs - this.windowMs) {
-      this.quietStretches.shift();
+    while (this.slices[0]?.startMs < nowMs - this.windowMs) {
+      this.slices.shift();
     }
 
     // Every buffer goes in, quiet ones too, as in the offline extraction:
@@ -213,10 +223,19 @@ class Session {
     // C++ side, so a stray N here is just noise, not silence.
     const readAtMs = (chordList.at(-1)?.time ?? 0) * 1000 - this.delayMs;
     const chordItem = chordList.slice(0, -1).findLast((item) => item.time * 1000 <= readAtMs);
-    const quiet = this.quietStretches.some(([start, end]) => start <= readAtMs && readAtMs < end);
+    const quiet = this.sustainedRms(readAtMs) < this.silenceRmsThreshold;
     if (chordItem && !quiet && chordItem.chord !== 'N' && this.lastChord !== chordItem.chord) {
       this.lastChord = chordItem.chord;
       post({ type: 'chordResult', result: chordItem });
     }
+  }
+
+  /** The lower quartile of the slices' RMS within sustainMs of atMs, 0 with none there */
+  private sustainedRms(atMs: number) {
+    const levels = this.slices
+      .filter(({ startMs }) => Math.abs(startMs - atMs) <= this.sustainMs)
+      .map(({ rms }) => rms)
+      .sort((a, b) => a - b);
+    return levels.length > 0 ? levels[Math.floor(this.sustainQuantile * (levels.length - 1))] : 0;
   }
 }

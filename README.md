@@ -136,12 +136,14 @@ The worker posts:
 - `{ type: 'ready' }` once the wasm is up; audio before that is skipped;
 - `{ type: 'chordResult', result: { chord, time } }` on every chord change.
   `time` is when the chord started, in seconds on the `AudioContext` clock. It
-  arrives `delayMs` plus about 0.2 s after that. Stretches of near silence
-  post nothing. What stays in the spectrum for a long while, as the hum of a
-  speaker left on near the microphone, is taken off before the chords are
-  matched, so playing over it reads as if it were not there; whatever sounds
-  from the very first frames counts as such background until it changes, so
-  start listening before playing;
+  arrives `delayMs` plus about 0.2 s after that. Nothing is posted where the
+  sustained level, the lower quartile of the RMS of 10 ms slices within 200 ms,
+  is under 0.008 (−42 dB): near silence, and sounds that do not ring on, such
+  as typing, steps or knocks, however loud each is. What stays in the spectrum
+  for a long while, as the hum of a speaker left on near the microphone, is
+  taken off before the chords are matched, so playing over it reads as if it
+  were not there; whatever sounds from the very first frames counts as such
+  background until it changes, so start listening before playing;
 - `{ type: 'error', message }` when it cannot start, as when the wasm cannot
   load;
 - `{ type: 'stopped' }` after it is sent `{ type: 'stop' }` and has released

@@ -135,7 +135,40 @@ describe('realtime processor and worker', () => {
     });
   }
 
+  /** Keys of a mechanical keyboard, 8 a second: a click and the board ringing after it, down and up */
+  function typing(seconds) {
+    const out = new Float32Array(Math.round(seconds * SAMPLE_RATE));
+    let seed = 7;
+    const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const strike = (at, peak) => {
+      const detune = 1 + (random() - 0.5) * 0.06;
+      const modes = [[180, 0.6, 0.012], [1250, 0.5, 0.008], [2900, 0.4, 0.005], [4300, 0.3, 0.004]];
+      for (let i = 0; i < 0.06 * SAMPLE_RATE && at + i < out.length; i++) {
+        const t = i / SAMPLE_RATE;
+        let value = i < 0.002 * SAMPLE_RATE ? (random() * 2 - 1) * (1 - t / 0.002) : 0;
+        for (const [frequency, amplitude, decay] of modes) {
+          value += amplitude * Math.exp(-t / decay) * Math.sin(2 * Math.PI * frequency * detune * t);
+        }
+        out[at + i] += peak * value;
+      }
+    };
+    for (let t = 0.2; t < seconds - 0.1; t += (0.5 + random()) / 8) {
+      strike(Math.round(t * SAMPLE_RATE), 0.25);
+      strike(Math.round((t + 0.06 + 0.04 * random()) * SAMPLE_RATE), 0.12);
+    }
+    return out;
+  }
+
   const mix = (...parts) => parts.reduce((sum, part) => sum.map((value, i) => value + part[i]));
+
+  test('posts nothing for typing over a hum', async () => {
+    // The clicks lifted the RMS of whole buffers over the silence gate, and the
+    // one thing in tune under them, the hum, read as chords with G
+    const { processor } = await listen();
+    stream(processor, clock, mix(roomTone(8, SAMPLE_RATE), hum(8), typing(8)), SAMPLE_RATE);
+
+    assert.deepEqual(detected(), []);
+  });
 
   test('follows the chords played over a hum', async () => {
     const voicings = [
