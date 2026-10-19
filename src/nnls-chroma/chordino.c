@@ -104,13 +104,14 @@ static const double noConfidenceDamping = 0.01;
 // gain levels off there, sharper only splits chords into more segments.
 static const double salienceBase = 2.8561;
 // How fast the background (see remove_background) rises after a quieter frame
-// set it, in dB a second. A note's partials stand some 40 dB or more over the
-// floor of their bins, so one held as loud as it started needs over a minute to
-// lose any of itself; a hum stays as loud for as long as whatever makes it is on.
+// set it, in dB a second, while the frames are quiet
 static const float backgroundRiseDb = 0.5;
 // How much over the background comes off: twice it, so a hum swaying a few dB
 // above its quietest goes too
 static const float backgroundOver = 2;
+// A frame is quiet, and lets the background rise, while its magnitudes add up
+// to under this many times the background's
+static const double backgroundQuiet = 4;
 
 enum { hamwinlength = nBPS * 6 + 1 };
 
@@ -290,16 +291,28 @@ void chordino_forget_before(chordino_t *c, realtime_t start) {
 // Takes the steady background off the magnitude spectrum, in place. The
 // background of a bin follows the quietest it has been lately, the way
 // ignoreBackground in tuner-live-worker.mjs follows the RMS: it drops at once to
-// a quieter frame and rises backgroundRiseDb a second after it. A hum or a
-// whine stays as loud frame after frame, so it is all background and goes, and
-// it goes before the tuning is estimated, which it would otherwise pull. A note
-// rises over the floor and falls back to it once it ends; only the floor comes
-// off it. Under a microphone near a speaker left on, a 60 Hz hum and a tone at
-// 397 Hz, a quarter-tone off G4, were all that most of the frames of typing
-// and talking had in tune, and the chords the matcher read in them had G.
+// a quieter frame, and rises backgroundRiseDb a second after it, but only
+// through quiet frames. A hum or a whine stays as loud frame after frame, so it
+// is all background and goes, and it goes before the tuning is estimated, which
+// it would otherwise pull. Under a microphone near a speaker left on, a 60 Hz
+// hum and a tone at 397 Hz, a quarter-tone off G4, were all that most of the
+// frames of typing and talking had in tune, and the chords the matcher read in
+// them had G. A note rises over the floor and falls back to it once it ends,
+// so only the floor comes off it; but in the bass of a tablet microphone the
+// floor is close under the notes, and a Bb held through Bbsus2 and Bbsus4 rose
+// into the background within 20 s, which left Eb the bass and read Ebsus2. So
+// the background holds still while anything plays over it.
 static void remove_background(chordino_t *c, float *magnitude) {
-    for (int iBin = 0; iBin < (int)(c->blockSize/2); iBin++) {
-        float background = c->backgroundSet ? fminf(magnitude[iBin], c->background[iBin] * c->backgroundRise) : magnitude[iBin];
+    int nBin = (int)(c->blockSize/2);
+    double level = 0;
+    double floor = 0;
+    for (int iBin = 0; iBin < nBin; iBin++) {
+        level += magnitude[iBin];
+        floor += c->background[iBin];
+    }
+    float rise = !c->backgroundSet || level < backgroundQuiet * floor ? c->backgroundRise : 1;
+    for (int iBin = 0; iBin < nBin; iBin++) {
+        float background = c->backgroundSet ? fminf(magnitude[iBin], c->background[iBin] * rise) : magnitude[iBin];
         c->background[iBin] = background;
         magnitude[iBin] = fmaxf(magnitude[iBin] - backgroundOver * background, 0);
     }
