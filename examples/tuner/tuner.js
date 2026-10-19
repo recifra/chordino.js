@@ -17,20 +17,29 @@ const IN_TUNE_CENTS = 5;
 const CLOSE_CENTS = 15;
 // app-recifra's bands per instrument: highpass and lowpass cutoffs, and high
 // shelves as [frequency, dB] that lift the quiet top of the piano over the
-// worker's RMS gate
+// worker's RMS gate. keyboardFlat is the keyboard's without them, to try a
+// flat gain in their place: YIN does not care how loud the window is, but the
+// shelves tilt the spectrum it reads.
 const BANDS = {
   off: null,
   guitar: { min: 70, max: 1200, shelves: [] },
   bass: { min: 35, max: 500, shelves: [] },
   keyboard: { min: 27.5, max: 4186, shelves: [[700, 14], [2000, 14]] },
+  keyboardFlat: { min: 27.5, max: 4186, shelves: [] },
 };
+// The worker's gate, in dB
+const GATE_DB = -40;
+const STORAGE_KEY = 'chordino-tuner:settings';
 
 const $ = (id) => document.getElementById(id);
 const listenButton = $('listen');
 const referenceButton = $('reference');
 const bandSelect = $('band');
+const gainSelect = $('gain');
+const notchSelect = $('notch');
 const statusEl = $('status');
 const clockEl = $('clock');
+const levelEl = $('level');
 const readoutEl = $('readout');
 const noteEl = $('note');
 const centsEl = $('cents');
@@ -47,6 +56,10 @@ let readingCount = 0;
 let shown = null;
 let lastPitchAt = -Infinity;
 let theme = readTheme();
+// The loudest input since the level was last shown, and when that was
+let levelPeak = 0;
+let levelShownAt = 0;
+const levelSamples = new Float32Array(2048);
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   theme = readTheme();
@@ -62,11 +75,37 @@ listenButton.addEventListener('click', () => {
   }
 });
 
-bandSelect.addEventListener('change', () => {
-  if (session) {
-    connectBand(session);
+loadSettings();
+for (const select of [bandSelect, gainSelect, notchSelect]) {
+  select.addEventListener('change', () => {
+    saveSettings();
+    if (session) {
+      connectChain(session);
+    }
+  });
+}
+
+/** The band, gain and hum picked last time, so a reload on the tablet keeps them */
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    for (const [select, value] of [[bandSelect, saved.band], [gainSelect, saved.gain], [notchSelect, saved.notch]]) {
+      if ([...select.options].some((option) => option.value === value)) {
+        select.value = value;
+      }
+    }
+  } catch {
+    // Storage blocked: the defaults stay
   }
-});
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ band: bandSelect.value, gain: gainSelect.value, notch: notchSelect.value }));
+  } catch {
+    // Storage blocked: nothing to keep
+  }
+}
 
 async function start() {
   if (!navigator.mediaDevices) {
@@ -98,8 +137,9 @@ async function start() {
     // It loads chordino.wasm from next to chordino.mjs
     const worker = new Worker(new URL('tuner-live-worker.mjs', LIB), { type: 'module' });
     const source = context.createMediaStreamSource(stream);
+    const analyser = new AnalyserNode(context, { fftSize: levelSamples.length });
 
-    session = { stream, context, source, worklet, worker, filters: [] };
+    session = { stream, context, source, worklet, worker, analyser, filters: [] };
     readings = [];
     readingCount = 0;
     shown = null;
@@ -113,13 +153,15 @@ async function start() {
     const { port1, port2 } = new MessageChannel();
     worker.postMessage({ type: 'start', sampleRate: context.sampleRate, port: port1, clockReports: true }, [port1]);
     worklet.port.postMessage({ type: 'port', port: port2 }, [port2]);
-    connectBand(session);
+    connectChain(session);
     worklet.connect(context.destination);
 
     listenButton.textContent = 'Stop listening';
     referenceButton.disabled = false;
     clockEl.textContent = 'clock –';
     clockEl.className = 'caption';
+    levelEl.textContent = 'input –';
+    levelEl.className = 'caption';
     setStatus(`Loading chordino.wasm… (${context.sampleRate} Hz)`);
   } catch (err) {
     stream?.getTracks().forEach((track) => track.stop());
@@ -149,24 +191,32 @@ async function stop() {
   setStatus(`Stopped · ${readingCount} readings`);
 }
 
-/** Microphone → the band's filters, if any → the worklet */
-function connectBand(current) {
-  const { context, source, worklet } = current;
+/** Microphone → gain → hum notches, if any → the band's filters, if any → the worklet, and the level meter */
+function connectChain(current) {
+  const { context, source, worklet, analyser } = current;
   source.disconnect();
-  current.filters.forEach((filter) => filter.disconnect());
+  current.filters.forEach((node) => node.disconnect());
   const band = BANDS[bandSelect.value];
-  current.filters = band
-    ? [
-      biquad(context, 'highpass', band.min),
-      biquad(context, 'lowpass', band.max),
-      ...band.shelves.map(([frequency, gain]) => biquad(context, 'highshelf', frequency, gain)),
-    ]
-    : [];
-  [source, ...current.filters].reduce((from, to) => from.connect(to)).connect(worklet);
+  const mains = Number(notchSelect.value);
+  current.filters = [
+    new GainNode(context, { gain: Number(gainSelect.value) }),
+    // Q 30: 2 Hz wide at 60 Hz, which leaves A♯1 and B1, 1.7 Hz away, about 1 dB down
+    ...(mains ? [mains, 2 * mains].map((frequency) => biquad(context, 'notch', frequency, 0, 30)) : []),
+    ...(band
+      ? [
+        biquad(context, 'highpass', band.min),
+        biquad(context, 'lowpass', band.max),
+        ...band.shelves.map(([frequency, gain]) => biquad(context, 'highshelf', frequency, gain)),
+      ]
+      : []),
+  ];
+  const tail = [source, ...current.filters].reduce((from, to) => from.connect(to));
+  tail.connect(worklet);
+  tail.connect(analyser);
 }
 
-function biquad(context, type, frequency, gain = 0) {
-  return new BiquadFilterNode(context, { type, frequency, gain });
+function biquad(context, type, frequency, gain = 0, Q = 1) {
+  return new BiquadFilterNode(context, { type, frequency, gain, Q });
 }
 
 function onMessage(data) {
@@ -242,6 +292,25 @@ function showPitch(frequency, time) {
   readoutEl.classList.remove('stale');
 }
 
+/** The loudest RMS reaching the worklet over the last 200 ms, in dB, against the gate */
+function showLevel(analyser) {
+  analyser.getFloatTimeDomainData(levelSamples);
+  let sumSq = 0;
+  for (const sample of levelSamples) {
+    sumSq += sample * sample;
+  }
+  levelPeak = Math.max(levelPeak, Math.sqrt(sumSq / levelSamples.length));
+  const now = performance.now();
+  if (now - levelShownAt < 200) {
+    return;
+  }
+  const db = 20 * Math.log10(levelPeak);
+  levelEl.textContent = `input ${db > -100 ? `−${Math.abs(db).toFixed(0)}` : '−∞'} dB · gate −${-GATE_DB}`;
+  levelEl.className = `caption ${db >= GATE_DB ? 'in-tune' : 'off'}`;
+  levelPeak = 0;
+  levelShownAt = now;
+}
+
 function showClock(ratio) {
   clockEl.textContent = `clock ${ratio.toFixed(3)}`;
   clockEl.className = `caption ${ratio >= 0.995 ? 'in-tune' : ratio >= 0.98 ? 'close' : 'off'}`;
@@ -270,6 +339,9 @@ function draw() {
   requestAnimationFrame(draw);
   if (performance.now() - lastPitchAt > STALE_MS) {
     readoutEl.classList.add('stale');
+  }
+  if (session) {
+    showLevel(session.analyser);
   }
 
   const ratio = devicePixelRatio || 1;

@@ -82,10 +82,29 @@
         <option value="guitar" selected>guitar (70–1200 Hz)</option>
         <option value="bass">bass (35–500 Hz)</option>
         <option value="keyboard">keyboard (27.5–4186 Hz, treble lifted)</option>
+        <option value="keyboardFlat">keyboard flat (27.5–4186 Hz)</option>
+      </select>
+    </label>
+    <label title="A flat gain before the filters, as app-recifra's sensitivity slider (its percentage in brackets): the worker drops windows under 0.01 RMS after it">Gain
+      <select id="gain">
+        <option value="0.25">×0.25 (20%)</option>
+        <option value="0.63">×0.63 (40%, app default)</option>
+        <option value="1" selected>×1 (50%)</option>
+        <option value="2">×2 (65%)</option>
+        <option value="4">×4 (80%)</option>
+        <option value="8">×8 (95%)</option>
+      </select>
+    </label>
+    <label title="Narrow notches at the mains frequency and twice it, whose hum otherwise reads as B1 and B2 (60 Hz) or G1 and G2 (50 Hz)">Hum
+      <select id="notch">
+        <option value="0" selected>off</option>
+        <option value="60">60 Hz</option>
+        <option value="50">50 Hz</option>
       </select>
     </label>
     <button id="reference" aria-pressed="false" disabled title="An oscillator at the note shown, in a second AudioContext: it loads the device as app-recifra's reference note does, and the microphone picking it up should read it in tune">Reference tone</button>
     <span id="clock" class="caption" title="AudioContext time over real time, every 5 s: well under 1, the audio thread is falling behind">clock –</span>
+    <span id="level" class="caption" title="RMS of what reaches the worklet, after the gain and the filters, against the worker's 0.01 gate (−40 dB): under it, nothing is read">input –</span>
   </div>
   <section class="readout stale" id="readout">
     <div id="note">–</div>
