@@ -4,6 +4,8 @@
 // newest frame. Messages to it:
 //   { type: 'start', sampleRate, delayMs, port }  port: where the audio comes in
 //   { type: 'stop' }
+//   { type: 'wav' }  answered with { type: 'wav', blob }: the last RECORD_SECONDS
+//                    of the audio, as a 16-bit WAV, to analyze it again elsewhere
 // and from it:
 //   { type: 'ready', labels, templates, chromaNames, semitoneNames } on the first frames
 //   { type: 'frames', settled, pending, readAt, newest, path } after every buffer:
@@ -12,14 +14,21 @@
 //     pending: the frames after it, whose values still move with every buffer
 //     path:    the Viterbi path from the read point on, as [{ chord, start, end }]
 //   { type: 'error', message }
-// A frame is { time, chroma, smoothed, salience, semitones, gate }, with the
-// salience summed per label (the dictionary has several templates per label).
+// A frame is { time, chroma, smoothed, salience, semitones, gate, sustained },
+// with the salience summed per label (the dictionary has several templates per
+// label), and sustained the level chord-live-worker.mjs holds against its
+// silence gate there: the lower quartile of the RMS of 512-sample slices within
+// 200 ms of the frame.
 
 importScripts('../lib/inspect/chordino-inspect.js');
 
 const BUFFER_SIZE = 4096;
 // As in chord-live-worker.mjs
 const WINDOW_MS = 10000;
+const SLICE_SAMPLES = 512;
+const SUSTAIN_MS = 200;
+// Audio kept for the WAV: at 48 kHz, 16-bit, about 29 MB
+const RECORD_SECONDS = 300;
 
 let instance = 0;
 let pBuffer = 0;
@@ -30,6 +39,13 @@ let bufferMs = 0;
 let settledUntil = -1;
 let labelOfBin = null;
 let labelCount = 0;
+// The slices still in the window, as { startMs, rms }, oldest first
+let slices = [];
+let sliceMs = 0;
+// The audio as it came in, 16-bit, a chunk per buffer
+let recording = [];
+let recorded = 0;
+let recordRate = 0;
 
 onmessage = ({ data }) => {
   try {
@@ -37,6 +53,8 @@ onmessage = ({ data }) => {
       start(data);
     } else if (data.type === 'stop') {
       stop();
+    } else if (data.type === 'wav') {
+      postMessage({ type: 'wav', blob: wav() });
     }
   } catch (err) {
     postMessage({ type: 'error', message: String(err?.message ?? err) });
@@ -49,6 +67,11 @@ function start({ sampleRate, delayMs: delay, port }) {
   bufferMs = (BUFFER_SIZE / sampleRate) * 1000;
   settledUntil = -1;
   labelOfBin = null;
+  slices = [];
+  sliceMs = (SLICE_SAMPLES / sampleRate) * 1000;
+  recording = [];
+  recorded = 0;
+  recordRate = sampleRate;
   pBuffer = Module._malloc(BUFFER_SIZE * Float32Array.BYTES_PER_ELEMENT);
   instance = Module.initializePlugin(sampleRate, BUFFER_SIZE, true);
   source = port;
@@ -77,6 +100,18 @@ function stop() {
 function analyze({ samples, startMs }) {
   if (!instance) {
     return;
+  }
+  record(samples);
+  for (let start = 0; start < samples.length; start += SLICE_SAMPLES) {
+    const end = Math.min(start + SLICE_SAMPLES, samples.length);
+    let sumSq = 0;
+    for (let i = start; i < end; i++) {
+      sumSq += samples[i] * samples[i];
+    }
+    slices.push({ startMs: startMs + (start / SLICE_SAMPLES) * sliceMs, rms: Math.sqrt(sumSq / (end - start)) });
+  }
+  while (slices[0].startMs < startMs + bufferMs - WINDOW_MS) {
+    slices.shift();
   }
   HEAPF32.set(samples, pBuffer >> 2);
   Module.processBuffer(instance, pBuffer, Math.trunc(startMs));
@@ -141,5 +176,46 @@ function frameAt(analysis, frame) {
     salience,
     semitones: row(analysis.semitonespectrum),
     gate: analysis.gate[frame],
+    sustained: sustainedAt(analysis.times[frame] * 1000),
   };
+}
+
+function sustainedAt(ms) {
+  const levels = slices
+    .filter(({ startMs }) => Math.abs(startMs - ms) <= SUSTAIN_MS)
+    .map(({ rms }) => rms)
+    .sort((a, b) => a - b);
+  return levels.length > 0 ? levels[Math.floor(0.25 * (levels.length - 1))] : 0;
+}
+
+function record(samples) {
+  const chunk = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    chunk[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32768)));
+  }
+  recording.push(chunk);
+  recorded += chunk.length;
+  while (recorded - recording[0].length >= RECORD_SECONDS * recordRate) {
+    recorded -= recording.shift().length;
+  }
+}
+
+/** The audio kept, as a mono 16-bit PCM WAV */
+function wav() {
+  const header = new DataView(new ArrayBuffer(44));
+  const text = (offset, value) => [...value].forEach((char, i) => header.setUint8(offset + i, char.charCodeAt(0)));
+  text(0, 'RIFF');
+  header.setUint32(4, 36 + recorded * 2, true);
+  text(8, 'WAVE');
+  text(12, 'fmt ');
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, recordRate, true);
+  header.setUint32(28, recordRate * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  text(36, 'data');
+  header.setUint32(40, recorded * 2, true);
+  return new Blob([header, ...recording], { type: 'audio/wav' });
 }

@@ -130,7 +130,11 @@ export function useLiveChords(delayMs = 1000) {
     let context: AudioContext | undefined;
     let worker: Worker | undefined;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
+      // Voice processing is for speech: noise suppression takes sustained notes for
+      // noise and cuts them, and gain control lifts the noise floor between them
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
       context = new AudioContext();
       worker = new ChordLiveWorker();
       await context.audioWorklet.addModule(processorUrl);

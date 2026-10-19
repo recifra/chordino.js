@@ -10,6 +10,10 @@
   #posted-chord, #newest-chord { font-size: 40px; font-weight: 700; min-width: 3.5em; }
   #newest-chord { color: var(--muted); }
   canvas { cursor: default; }
+  #input { display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
+  #download:disabled { opacity: 0.5; cursor: default; }
+  .ok { color: var(--ok); }
+  .bad { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -24,6 +28,7 @@
         <option value="0.5" selected>every 0.5 s</option>
         <option value="1">every 1 s</option>
       </select>
+      <button id="download" class="file" disabled title="The microphone as the workers got it, the last 5 minutes, as a 16-bit WAV, to analyze it again elsewhere">Download audio</button>
     </span>
   </header>
   <div class="controls">
@@ -43,6 +48,7 @@
         <option value="1000" selected>1000 ms</option>
       </select>
     </label>
+    <label title="The browser's echo cancellation, noise suppression and gain control. Made for speech, they reshape music: off unless comparing"><input type="checkbox" id="voice-processing"> voice processing</label>
   </div>
   <div class="now">
     <div>
@@ -54,6 +60,10 @@
       <div id="newest-chord">–</div>
     </div>
     <div id="time"></div>
+    <div id="input">
+      <span id="level" class="caption" title="Loudest RMS of what reaches the worklet lately, and the sustained level at the read line (the lower quartile of 10 ms slices within 200 ms), which chord-live-worker.mjs holds against its silence gate: under it, nothing is posted, so typing and steps, loud as each is, are not">input –</span>
+      <span id="processing" class="caption" title="The voice processing the browser applied, from getSettings(): on, it reshapes music">–</span>
+    </div>
     <ol id="candidates"></ol>
   </div>
   <main id="panels"></main>

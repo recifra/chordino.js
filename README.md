@@ -110,7 +110,11 @@ catch up, which reads everything about a semitone sharp. The two talk over a
 
 ```js
 const context = new AudioContext();
-const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
+// Voice processing is for speech: noise suppression takes sustained notes for
+// noise and cuts them, and gain control lifts the noise floor between them
+const stream = await navigator.mediaDevices.getUserMedia({
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+});
 const worker = new Worker(new URL('chord-live-worker.mjs', lib), { type: 'module' });
 await context.audioWorklet.addModule(new URL('chord-processor.mjs', lib));
 
@@ -275,7 +279,8 @@ a hook for each.
   salience and semitone spectrum Chordino works from, next to the chords it
   finds.
 - `realtime/`: the same from the microphone, through the production worklet
-  and worker.
+  and worker, with the input and sustained levels against the silence gate,
+  and the audio heard to download as a WAV, to analyze it again elsewhere.
 - `tuner/`: a tuner on the microphone, through the worklet and the tuner
   worker, with the clock ratio and a reference tone to read back.
 

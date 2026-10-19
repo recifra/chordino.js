@@ -28,6 +28,14 @@ const MAX_EXTRA_ROWS = 12;
 // Settled frames kept for the export
 const KEEP_SECONDS = 600;
 const STORAGE_KEY = 'chordino-realtime:hidden';
+// chord-live-worker.mjs's silence gate, held against the sustained level (see
+// inspect-worker.js): under it, nothing is posted
+const GATE_RMS = 0.008;
+const GATE_DB = 20 * Math.log10(GATE_RMS);
+// Each frame is normalized on its own, which paints a quiet room's noise as
+// brightly as a chord; frames under the gate are drawn this dim instead.
+const QUIET_DIM = 0.15;
+const PROCESSING = { echoCancellation: 'echo', noiseSuppression: 'noise', autoGainControl: 'gain' };
 
 const PANELS = [
   {
@@ -72,6 +80,10 @@ const windowSelect = $('window');
 const delaySelect = $('delay');
 const exportButton = $('export');
 const exportStep = $('export-step');
+const levelText = $('level');
+const processingText = $('processing');
+const downloadButton = $('download');
+const processingBox = $('voice-processing');
 
 const LUT = buildLut([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]);
 
@@ -92,6 +104,15 @@ let version = 0;
 let theme = readTheme();
 let windowSec = Number(windowSelect.value);
 let lastKey = '';
+let wakeLock = null;
+// The WAV of the last session, kept once it stops, and the request for one
+// waiting on inspect-worker.js
+let audio = null;
+let wavRequest = null;
+// The loudest input since the level was last shown, and when that was
+let levelPeak = 0;
+let levelShownAt = 0;
+const levelSamples = new Float32Array(2048);
 
 const hidden = new Set(loadHidden());
 const lane = createLane();
@@ -115,13 +136,22 @@ async function start() {
   }
   listenButton.disabled = true;
   delaySelect.disabled = true;
+  processingBox.disabled = true;
   setStatus('Asking for the microphone…');
   let stream;
   let context;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false } });
+    // Voice processing is for speech: noise suppression takes sustained notes for
+    // noise and cuts them, and gain control lifts the noise floor between them.
+    // It is only on here to compare.
+    const processing = processingBox.checked;
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: processing, noiseSuppression: processing, autoGainControl: processing },
+    });
+    showProcessing(stream.getAudioTracks()[0].getSettings());
     context = new AudioContext();
     const source = context.createMediaStreamSource(stream);
+    const analyser = new AnalyserNode(context, { fftSize: levelSamples.length });
     await context.audioWorklet.addModule(new URL('chord-processor.mjs', LIB));
     await context.audioWorklet.addModule('./tap-processor.js');
 
@@ -137,7 +167,7 @@ async function start() {
     frameRate = context.sampleRate / STEP;
     startedAt = context.currentTime;
     stoppedAt = null;
-    session = { stream, context, chordNode, chordWorker, tapNode, worker };
+    session = { stream, context, chordNode, chordWorker, tapNode, worker, analyser };
     chordWorker.onmessage = ({ data }) => onChordMessage(data, context);
     worker.onmessage = ({ data }) => onWorkerMessage(data);
     worker.onerror = (event) => {
@@ -154,36 +184,62 @@ async function start() {
     tapNode.port.postMessage({ type: 'port', port: channel.port2 }, [channel.port2]);
     source.connect(chordNode);
     source.connect(tapNode);
+    source.connect(analyser);
     chordNode.connect(context.destination);
     tapNode.connect(context.destination);
 
     listenButton.textContent = 'Stop listening';
+    keepAwake();
     setStatus('Loading chordino.wasm…');
   } catch (err) {
     stream?.getTracks().forEach((track) => track.stop());
     context?.close();
     session = null;
     delaySelect.disabled = false;
+    processingBox.disabled = false;
     setStatus(`Could not listen: ${err.message}`);
   }
   listenButton.disabled = false;
 }
+
+/** Keeps the screen on while listening: a tablet left on a stand sleeps mid-test otherwise */
+async function keepAwake() {
+  try {
+    wakeLock = (await navigator.wakeLock?.request('screen')) ?? null;
+  } catch {
+    // Refused, as on battery saver: the screen sleeps as usual
+  }
+}
+
+// The lock goes whenever the page is hidden
+document.addEventListener('visibilitychange', () => {
+  if (session && document.visibilityState === 'visible') {
+    keepAwake();
+  }
+});
 
 async function stop() {
   const current = session;
   session = null;
   stoppedAt = current.context.currentTime;
   listenButton.disabled = true;
+  wakeLock?.release();
+  wakeLock = null;
   current.stream.getTracks().forEach((track) => track.stop());
   current.tapNode.port.postMessage({ type: 'stop' });
   current.chordNode.port.postMessage({ type: 'stop' });
+  audio = await fetchWav(current.worker);
   current.worker.terminate();
   // The plugin goes with the worker
   current.chordWorker.terminate();
   await current.context.close();
+  levelText.textContent = 'input –';
+  levelText.className = 'caption';
   listenButton.textContent = 'Start listening';
   listenButton.disabled = false;
   delaySelect.disabled = false;
+  processingBox.disabled = false;
+  downloadButton.disabled = !audio;
   setStatus(`Stopped after ${formatTime(stoppedAt - startedAt)} · ${posted.length} chords posted`);
 }
 
@@ -213,9 +269,22 @@ function onWorkerMessage(data) {
     ({ pending, path, readAt, newest } = data);
     version++;
     exportButton.disabled = settled.length === 0;
+    downloadButton.disabled = false;
+  } else if (data.type === 'wav') {
+    wavRequest?.(data.blob);
+    wavRequest = null;
   } else if (data.type === 'error') {
     setStatus(`Inspect worker failed: ${data.message}`);
   }
+}
+
+/** The audio inspect-worker.js kept, as a WAV; null if it does not answer within 5 s */
+function fetchWav(worker) {
+  return new Promise((resolve) => {
+    wavRequest = resolve;
+    worker.postMessage({ type: 'wav' });
+    setTimeout(() => resolve(null), 5000);
+  });
 }
 
 function clearData() {
@@ -227,11 +296,43 @@ function clearData() {
   newest = null;
   version++;
   exportButton.disabled = true;
+  downloadButton.disabled = true;
+  audio = null;
   lastKey = '';
 }
 
 function setStatus(text) {
   statusText.textContent = text;
+}
+
+/** The voice processing the browser applied, which can differ from what was asked for */
+function showProcessing(settings) {
+  const on = Object.keys(PROCESSING).filter((name) => settings[name] !== false);
+  processingText.textContent = Object.entries(PROCESSING)
+    .map(([name, label]) => `${label} ${settings[name] === undefined ? '?' : settings[name] ? 'on' : 'off'}`)
+    .join(' · ');
+  processingText.className = `caption ${on.length ? 'bad' : 'ok'}`;
+}
+
+/** The loudest RMS reaching the worklets over the last 200 ms, in dB, against the gate */
+function showLevel(analyser) {
+  analyser.getFloatTimeDomainData(levelSamples);
+  let sumSq = 0;
+  for (const sample of levelSamples) {
+    sumSq += sample * sample;
+  }
+  levelPeak = Math.max(levelPeak, Math.sqrt(sumSq / levelSamples.length));
+  const now = performance.now();
+  if (now - levelShownAt < 200) {
+    return;
+  }
+  const db = 20 * Math.log10(levelPeak);
+  const sustained = settled.at(-1)?.sustained ?? 0;
+  const held = 20 * Math.log10(sustained);
+  levelText.textContent = `input ${formatDb(db)} · sustained ${formatDb(held)} · gate ${formatDb(GATE_DB)}`;
+  levelText.className = `caption ${sustained >= GATE_RMS ? 'ok' : 'bad'}`;
+  levelPeak = 0;
+  levelShownAt = now;
 }
 
 /** The clock everything scrolls by: the AudioContext's, frozen once stopped. */
@@ -242,14 +343,29 @@ function clock() {
 // --- export ----------------------------------------------------------------------
 
 exportButton.addEventListener('click', () => {
-  const audioName = `realtime-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const audioName = fileName();
   const text = buildExport({ view: buildView(), expected: null, audioName, step: Number(exportStep.value) });
+  save(new Blob([text], { type: 'application/json' }), `${audioName}.chordino.json`);
+});
+
+downloadButton.addEventListener('click', async () => {
+  const blob = session ? await fetchWav(session.worker) : audio;
+  if (blob) {
+    save(blob, `${fileName()}.wav`);
+  }
+});
+
+function fileName() {
+  return `realtime-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+}
+
+function save(blob, name) {
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-  link.download = `${audioName}.chordino.json`;
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 0);
-});
+}
 
 /** The settled frames and posted chords in the shape the player hands buildExport. */
 function buildView() {
@@ -377,13 +493,14 @@ function renderImage(panel, frames, { rows, groups, binCount }) {
   const gamma = panel.gamma ?? 1;
   frames.forEach((frame, x) => {
     const values = frame[panel.field];
+    const dim = frame.sustained < GATE_RMS ? QUIET_DIM : 1;
     peaks.fill(0);
     for (let bin = 0; bin < binCount; bin++) {
       peaks[groups[bin]] = Math.max(peaks[groups[bin]], values[bin]);
     }
     rows.forEach((row, y) => {
       const peak = peaks[groups[row.bin]];
-      const level = peak > 0 ? (values[row.bin] / peak) ** gamma : 0;
+      const level = peak > 0 ? dim * (values[row.bin] / peak) ** gamma : 0;
       const color = Math.round(level * 255) * 3;
       const pixel = (y * canvas.width + x) * 4;
       image.data[pixel] = LUT[color];
@@ -414,7 +531,8 @@ function createLane() {
   section.className = 'panel';
   section.innerHTML = '<h2>Chords <small>posted by chord-live-worker.mjs, from the time each reports; ' +
     'faded, right of the read line: the Viterbi path there now, not posted yet; ' +
-    'ticks on top: frames the confidence gate rejected (gray: chord too close to N, purple: another root too close)</small></h2>';
+    'ticks on top: frames the confidence gate rejected (gray: chord too close to N, purple: another root too close); ' +
+    'the panels below go dim where the sustained level is under the −42 dB silence gate, where nothing is posted</small></h2>';
   const canvas = document.createElement('canvas');
   section.append(canvas);
   $('panels').append(section);
@@ -502,6 +620,9 @@ function saveHidden() {
 
 requestAnimationFrame(function tick() {
   requestAnimationFrame(tick);
+  if (session) {
+    showLevel(session.analyser);
+  }
   const time = clock();
   if (!names || time === null) {
     return;
@@ -718,6 +839,10 @@ function updateNow(time) {
     item.append(name, track, pct);
     return item;
   }));
+}
+
+function formatDb(db) {
+  return `${db > -100 ? `−${Math.abs(db).toFixed(0)}` : '−∞'} dB`;
 }
 
 function formatTime(seconds, digits = 1) {
