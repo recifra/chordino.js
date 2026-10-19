@@ -17,6 +17,17 @@ the example read in tune, the reference tone included, with a clock ratio of
 WebView-free chain keeps up there; what is left to see is the app, with
 spessasynth playing, after the migration below with `clockReports` on.
 
+The migration is in app-recifra (its commit ac2ad5fc). Its piano tuner, fed
+by an external speaker, then missed every note under D3 and read B1 out of
+nowhere, in Chrome as in the app. The example, given a gain, a keyboard band
+without the treble shelves and an input level meter, found why: the shelves
+(+28 dB over 2 kHz) drown the harmonics low notes are found by, while the
+keyboard band without them at a gain of 1 reads G0 to C8; and the B1, about
+5 cents flat, was the hum of the speaker. 0.3.1 adds `ignoreBackground`,
+which skips what is not 6 dB over the background. Left for app-recifra: the
+keyboard band without shelves, a gain of 1 from the start, and
+`ignoreBackground: true`.
+
 From 0.2.1, `build/chordino.wasm` went from 69,712 to 72,648 bytes (+2.9 KB)
 and `chordino.mjs` from 5,138 to 5,307. `detectPitch` takes 0.061 ms per
 4096-sample window under node on a desktop, against 0.41 ms for app-recifra's
