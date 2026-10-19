@@ -6,9 +6,10 @@ own worklet, worker and detector.
 
 ## Status (2026-10-19)
 
-Step 1 is done, not yet committed: `src/pitch.c`/`.h`, the four exports and
-the C half of `test/tuner.test.js`. Steps 2 to 6 are still to do (no
-`bufferSize` option, tuner worker, worker tests or example yet).
+Steps 1 to 4 are done: `src/pitch.c`/`.h` and its exports,
+`processorOptions.bufferSize` in the worklet, `tuner-live-worker.mjs` with the
+clock report, and `test/tuner.test.js`. Steps 5 (`examples/tuner/`) and 6
+(README, BUILD.md, 0.3.0) are still to do.
 
 From 0.2.1, `build/chordino.wasm` went from 69,712 to 72,648 bytes (+2.9 KB)
 and `chordino.mjs` from 5,138 to 5,307. `detectPitch` takes 0.061 ms per
@@ -217,9 +218,9 @@ context: on the Android tablet, serve on the computer and open it through
 
 ## Tests (`test/tuner.test.js`, `node --test` against `build/`)
 
-Already in, on `detectPitch` itself: the tones within 5 cents, the range,
-the direct-sum comparison, silence, `pitchRms` and odd sizes. The rest goes
-through the worker, in step 4.
+All of the below are in, plus silence, `pitchRms` and odd sizes on
+`detectPitch` itself, a `bufferSize` that is not a multiple of the render
+quantum, and no `clock` without `clockReports`.
 
 From app-recifra's `src/utils/pitch-detector.test.ts`, ported:
 

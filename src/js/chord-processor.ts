@@ -1,7 +1,8 @@
 // Realtime chord detection, the AudioWorklet half: it gathers the microphone into
 // buffers and hands them to chord-live-worker.mjs, which runs Chordino; see
 // there for how a page connects the two. The buffers are 4096 samples long
-// unless processorOptions.bufferSize says otherwise. Nothing here does more
+// unless processorOptions.bufferSize says otherwise. It feeds the tuner,
+// tuner-live-worker.mjs, the same way, in buffers of 2048. Nothing here does more
 // than copy. Decoding takes far longer than a render quantum, and an audio thread
 // that overruns its quanta makes iOS drop microphone samples to keep up, which
 // raises the pitch of everything heard after.

@@ -15,6 +15,7 @@ export const paths = {
   wasm: path.join(root, 'build/chordino.wasm'),
   processor: path.join(root, 'build/chord-processor.mjs'),
   liveWorker: path.join(root, 'build/chord-live-worker.mjs'),
+  tunerWorker: path.join(root, 'build/tuner-live-worker.mjs'),
   worker: path.join(root, 'build/chord-worker.mjs'),
   inspect: path.join(root, 'build/inspect/chordino-inspect.js'),
   chordsMp3: path.join(root, 'test/fixtures/chords.mp3'),
@@ -249,17 +250,19 @@ export async function loadProcessor(file, sampleRate) {
 }
 
 /**
- * Loads the live pair, chord-processor.mjs and chord-live-worker.mjs, each with
- * the globals it expects (see loadProcessor and loadWorker). `start` connects a
- * new processor to the worker the way a page does, and resolves once the worker
- * has handled the start; it hands back the worker's end of the channel too.
+ * Loads a live pair, chord-processor.mjs and a worker (chord-live-worker.mjs
+ * unless given, or tuner-live-worker.mjs), each with the globals it expects
+ * (see loadProcessor and loadWorker). `start` connects a new processor to the
+ * worker the way a page does, and resolves once the worker has handled the
+ * start; it hands back the worker's end of the channel too. Options go to the
+ * worker's start message, and `processorOptions` to the processor.
  */
-export async function loadLive(sampleRate) {
+export async function loadLive(sampleRate, workerFile = paths.liveWorker) {
   const { registered, clock } = await loadProcessor(paths.processor, sampleRate);
-  const worker = await loadWorker(paths.liveWorker);
+  const worker = await loadWorker(workerFile);
   const ChordProcessor = registered['chord-processor'];
-  async function start(options = {}) {
-    const processor = new ChordProcessor();
+  async function start({ processorOptions, ...options } = {}) {
+    const processor = new ChordProcessor({ processorOptions });
     const { port1, port2 } = messageChannel();
     processor.port.send({ type: 'port', port: port2 });
     await worker.send({ type: 'start', sampleRate, port: port1, ...options });

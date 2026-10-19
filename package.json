@@ -34,6 +34,7 @@
     "./chord-worker.mjs": "./build/chord-worker.mjs",
     "./chord-live-worker.mjs": "./build/chord-live-worker.mjs",
     "./chord-processor.mjs": "./build/chord-processor.mjs",
+    "./tuner-live-worker.mjs": "./build/tuner-live-worker.mjs",
     "./chordino.wasm": "./build/chordino.wasm",
     "./package.json": "./package.json"
   },
@@ -44,6 +45,7 @@
     "build/chord-worker.mjs",
     "build/chord-live-worker.mjs",
     "build/chord-processor.mjs",
+    "build/tuner-live-worker.mjs",
     "src/kissfft/COPYING",
     "src/kissfft/LICENSES/BSD-3-Clause",
     "src/vamp-sdk-COPYING"
@@ -51,7 +53,7 @@
   "scripts": {
     "build": "npm run build:wasm && npm run build:js",
     "build:wasm": "bash src/build.sh",
-    "build:js": "tsc -b src/js && esbuild src/js/chord-worker.ts src/js/chord-live-worker.ts src/js/chord-processor.ts --outdir=build --out-extension:.js=.mjs --format=esm --target=es2022 --minify && cp src/js/chordino.d.mts build/",
+    "build:js": "tsc -b src/js && esbuild src/js/chord-worker.ts src/js/chord-live-worker.ts src/js/chord-processor.ts src/js/tuner-live-worker.ts --outdir=build --out-extension:.js=.mjs --format=esm --target=es2022 --minify && cp src/js/chordino.d.mts build/",
     "test": "node --test \"test/*.test.js\"",
     "prepublishOnly": "npm run build && npm test"
   },
