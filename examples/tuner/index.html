@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chordino Tuner</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../player/style.css">
+<style>
+  body { max-width: 720px; margin: 0 auto; }
+  #reference {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  #reference[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  #reference:disabled { opacity: 0.5; cursor: default; }
+  .readout {
+    margin: 12px 0;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    text-align: center;
+    transition: opacity 0.3s;
+  }
+  .readout.stale { opacity: 0.35; }
+  #note { font-size: 96px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  #note sub { font-size: 40px; font-weight: 600; vertical-align: baseline; margin-left: 2px; }
+  #cents { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #frequency { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .in-tune { color: var(--ok); }
+  .close { color: var(--warn); }
+  .off { color: var(--bad); }
+  .meter { position: relative; height: 36px; margin: 16px 0 4px; }
+  .meter .scale {
+    position: absolute;
+    inset: 16px 0 auto;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--lane-a);
+  }
+  .meter .zone {
+    position: absolute;
+    top: 12px;
+    height: 12px;
+    border-radius: 3px;
+    background: var(--ok);
+    opacity: 0.35;
+  }
+  .meter .tick { position: absolute; top: 10px; width: 1px; height: 16px; background: var(--border); }
+  #needle {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 4px;
+    height: 36px;
+    margin-left: -2px;
+    border-radius: 2px;
+    background: var(--fg);
+    transition: left 0.08s linear;
+  }
+  .meter-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  #clock { font-variant-numeric: tabular-nums; }
+  #strip { height: 160px; cursor: default; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Chordino Tuner</h1>
+    <button id="listen">Start listening</button>
+    <span id="status">Listens to the microphone through chord-processor.mjs and tuner-live-worker.mjs, as an app would.</span>
+  </header>
+  <div class="controls">
+    <label title="Biquad filters between the microphone and the worklet, as app-recifra sets them per instrument">Band
+      <select id="band">
+        <option value="off">off</option>
+        <option value="guitar" selected>guitar (70–1200 Hz)</option>
+        <option value="bass">bass (35–500 Hz)</option>
+        <option value="keyboard">keyboard (27.5–4186 Hz, treble lifted)</option>
+      </select>
+    </label>
+    <button id="reference" aria-pressed="false" disabled title="An oscillator at the note shown, in a second AudioContext: it loads the device as app-recifra's reference note does, and the microphone picking it up should read it in tune">Reference tone</button>
+    <span id="clock" class="caption" title="AudioContext time over real time, every 5 s: well under 1, the audio thread is falling behind">clock –</span>
+  </div>
+  <section class="readout stale" id="readout">
+    <div id="note">–</div>
+    <div id="cents">&nbsp;</div>
+    <div class="meter" aria-hidden="true">
+      <div class="scale"></div>
+      <div class="zone" style="left: 45%; width: 10%"></div>
+      <div class="tick" style="left: 0"></div>
+      <div class="tick" style="left: 25%"></div>
+      <div class="tick" style="left: 50%"></div>
+      <div class="tick" style="left: 75%"></div>
+      <div class="tick" style="left: calc(100% - 1px)"></div>
+      <div id="needle"></div>
+    </div>
+    <div class="meter-labels"><span>−50</span><span>−25</span><span>0</span><span>+25</span><span>+50</span></div>
+    <div id="frequency">&nbsp;</div>
+  </section>
+  <section class="panel">
+    <h2>Last 10 s <small>cents against the nearest note, one dot per reading; the band is ±5</small></h2>
+    <canvas id="strip"></canvas>
+  </section>
+  <script type="module" src="./tuner.js"></script>
+</body>
+</html>

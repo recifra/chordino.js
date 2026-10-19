@@ -6,10 +6,13 @@ own worklet, worker and detector.
 
 ## Status (2026-10-19)
 
-Steps 1 to 4 are done: `src/pitch.c`/`.h` and its exports,
+Steps 1 to 5 are done: `src/pitch.c`/`.h` and its exports,
 `processorOptions.bufferSize` in the worklet, `tuner-live-worker.mjs` with the
-clock report, and `test/tuner.test.js`. Steps 5 (`examples/tuner/`) and 6
-(README, BUILD.md, 0.3.0) are still to do.
+clock report, `test/tuner.test.js` and `examples/tuner/`. The page was checked
+in desktop Chrome with an oscillator standing in for the microphone (in tune,
+19.6 cents sharp at 445 Hz, E1, silence, clock ratio 1.000); it still has to
+be tried on the tablet that stutters. Step 6 (README, BUILD.md, 0.3.0) is
+still to do.
 
 From 0.2.1, `build/chordino.wasm` went from 69,712 to 72,648 bytes (+2.9 KB)
 and `chordino.mjs` from 5,138 to 5,307. `detectPitch` takes 0.061 ms per
