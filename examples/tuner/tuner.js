@@ -55,6 +55,7 @@ let readings = [];
 let readingCount = 0;
 let shown = null;
 let lastPitchAt = -Infinity;
+let wakeLock = null;
 let theme = readTheme();
 // The loudest input since the level was last shown, and when that was
 let levelPeak = 0;
@@ -158,6 +159,7 @@ async function start() {
 
     listenButton.textContent = 'Stop listening';
     referenceButton.disabled = false;
+    keepAwake();
     clockEl.textContent = 'clock –';
     clockEl.className = 'caption';
     levelEl.textContent = 'input –';
@@ -172,6 +174,22 @@ async function start() {
   listenButton.disabled = false;
 }
 
+/** Keeps the screen on while listening: a tablet left on a stand sleeps mid-test otherwise */
+async function keepAwake() {
+  try {
+    wakeLock = (await navigator.wakeLock?.request('screen')) ?? null;
+  } catch {
+    // Refused, as on battery saver: the screen sleeps as usual
+  }
+}
+
+// The lock goes whenever the page is hidden
+document.addEventListener('visibilitychange', () => {
+  if (session && document.visibilityState === 'visible') {
+    keepAwake();
+  }
+});
+
 async function stop() {
   const current = session;
   session = null;
@@ -181,6 +199,8 @@ async function stop() {
     stopReference();
   }
   referenceButton.disabled = true;
+  wakeLock?.release();
+  wakeLock = null;
   current.stream.getTracks().forEach((track) => track.stop());
   current.worklet.port.postMessage({ type: 'stop' });
   // The detector goes with the worker
