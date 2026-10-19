@@ -317,6 +317,53 @@ describe('tuner worker', () => {
     }
   });
 
+  const mix = (...parts) => {
+    const out = new Float32Array(parts[0].length);
+    for (const part of parts) {
+      part.forEach((value, i) => {
+        out[i] += value;
+      });
+    }
+    return out;
+  };
+
+  test('ignoreBackground: a steady hum reads as a note without it, and not with it', async () => {
+    // A speaker left on near the microphone: B1 about 5 cents flat, quiet but
+    // over the 0.01 gate
+    const hum = seconds(61.57, SAMPLE_RATE, 2, { amplitude: 0.02 });
+    const plain = readings(await listen(), hum).filter((value) => value !== null);
+    assert.ok(plain.length > 0 && plain.every((value) => Math.abs(cents(value, 61.57)) < 5), `read ${plain}`);
+
+    worker.messages.length = 0;
+    const found = readings(await listen({ ignoreBackground: true }), hum);
+    assert.ok(found.every((value) => value === null), `read ${found}`);
+  });
+
+  test('ignoreBackground: digital silence before the hum does not keep the hum in', async () => {
+    // As a microphone delivers zeros before its first samples
+    const live = await listen({ ignoreBackground: true });
+    readings(live, new Float32Array(SAMPLE_RATE / 2));
+    const found = readings(live, seconds(61.57, SAMPLE_RATE, 2, { amplitude: 0.02 }));
+    assert.ok(found.every((value) => value === null), `read ${found}`);
+  });
+
+  test('ignoreBackground: a note over the hum is read, and the hum alone again is not', async () => {
+    const live = await listen({ ignoreBackground: true });
+    readings(live, seconds(61.57, SAMPLE_RATE, 1, { amplitude: 0.02 }));
+    const note = readings(live, mix(seconds(61.57, SAMPLE_RATE, 1, { amplitude: 0.02 }), seconds(440, SAMPLE_RATE, 1)));
+    assert.ok(note.slice(3).every((value) => value !== null && Math.abs(cents(value, 440)) < 5), `read ${note}`);
+    const after = readings(live, seconds(61.57, SAMPLE_RATE, 1, { amplitude: 0.02 }));
+    // The first buffers still have the end of the note in the window
+    assert.ok(after.slice(2).every((value) => value === null), `read ${after}`);
+  });
+
+  test('ignoreBackground: a note held for 8 s is still read at the end', async () => {
+    const live = await listen({ ignoreBackground: true });
+    readings(live, seconds(61.57, SAMPLE_RATE, 1, { amplitude: 0.02 }));
+    const held = readings(live, mix(seconds(61.57, SAMPLE_RATE, 8, { amplitude: 0.02 }), seconds(440, SAMPLE_RATE, 8)));
+    assert.ok(held.slice(-20).every((value) => value !== null), 'the held note became the background');
+  });
+
   test('posts no clock without clockReports', async () => {
     const live = await listen();
     stream(live.processor, clock, new Float32Array(6 * SAMPLE_RATE), SAMPLE_RATE);

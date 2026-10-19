@@ -207,6 +207,11 @@ clock. The note and how many cents off it is are left to the page.
 - It reaches A0 (27.5 Hz) to C8 (4186 Hz) at 48 kHz, C8 about 5 cents sharp.
   It listens to everything: to keep one instrument's band, put biquad filters
   between the microphone and the worklet (the tuner example has some).
+- With `ignoreBackground: true` in `start`, it also skips what is not clearly
+  louder than the background: a steady hum, as from a speaker left on near the
+  microphone, is periodic enough to read as a note otherwise. The background
+  follows the quietest windows, dropping at once and rising 1 dB a second, so
+  a held note is read for a long while; a window has to be 6 dB over it.
 - With `clockReports: true` in `start`, it also posts `{ type: 'clock', ratio }`
   about every 5 s: the `AudioContext` time the buffers covered over the time
   they took to come. Well under 1, the audio thread is falling behind, the

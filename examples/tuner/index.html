@@ -102,6 +102,7 @@
         <option value="50">50 Hz</option>
       </select>
     </label>
+    <label title="tuner-live-worker's ignoreBackground: skip what is not clearly louder than the background, such as the hum of a speaker left on, which otherwise reads as a note"><input type="checkbox" id="background" checked> ignore background</label>
     <button id="reference" aria-pressed="false" disabled title="An oscillator at the note shown, in a second AudioContext: it loads the device as app-recifra's reference note does, and the microphone picking it up should read it in tune">Reference tone</button>
     <span id="clock" class="caption" title="AudioContext time over real time, every 5 s: well under 1, the audio thread is falling behind">clock –</span>
     <span id="level" class="caption" title="RMS of what reaches the worklet, after the gain and the filters, against the worker's 0.01 gate (−40 dB): under it, nothing is read">input –</span>

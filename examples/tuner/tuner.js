@@ -37,6 +37,7 @@ const referenceButton = $('reference');
 const bandSelect = $('band');
 const gainSelect = $('gain');
 const notchSelect = $('notch');
+const backgroundBox = $('background');
 const statusEl = $('status');
 const clockEl = $('clock');
 const levelEl = $('level');
@@ -85,8 +86,16 @@ for (const select of [bandSelect, gainSelect, notchSelect]) {
     }
   });
 }
+// The worker takes it at start
+backgroundBox.addEventListener('change', async () => {
+  saveSettings();
+  if (session) {
+    await stop();
+    start();
+  }
+});
 
-/** The band, gain and hum picked last time, so a reload on the tablet keeps them */
+/** The band, gain, hum and background picked last time, so a reload on the tablet keeps them */
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
@@ -95,6 +104,9 @@ function loadSettings() {
         select.value = value;
       }
     }
+    if (typeof saved.ignoreBackground === 'boolean') {
+      backgroundBox.checked = saved.ignoreBackground;
+    }
   } catch {
     // Storage blocked: the defaults stay
   }
@@ -102,7 +114,12 @@ function loadSettings() {
 
 function saveSettings() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ band: bandSelect.value, gain: gainSelect.value, notch: notchSelect.value }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      band: bandSelect.value,
+      gain: gainSelect.value,
+      notch: notchSelect.value,
+      ignoreBackground: backgroundBox.checked,
+    }));
   } catch {
     // Storage blocked: nothing to keep
   }
@@ -152,7 +169,13 @@ async function start() {
 
     // The audio goes from the worklet straight to the worker, not through this thread
     const { port1, port2 } = new MessageChannel();
-    worker.postMessage({ type: 'start', sampleRate: context.sampleRate, port: port1, clockReports: true }, [port1]);
+    worker.postMessage({
+      type: 'start',
+      sampleRate: context.sampleRate,
+      port: port1,
+      clockReports: true,
+      ignoreBackground: backgroundBox.checked,
+    }, [port1]);
     worklet.port.postMessage({ type: 'port', port: port2 }, [port2]);
     connectChain(session);
     worklet.connect(context.destination);

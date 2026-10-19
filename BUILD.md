@@ -70,8 +70,9 @@ Everything lands in `build/`:
 - `tuner-live-worker.mjs` (from `src/js/tuner-live-worker.ts`): module worker
   that reads the pitch of the microphone from `chord-processor.mjs` in
   buffers of 2048, for a tuner: YIN on the newest 4096 samples once per batch,
-  an RMS gate, 3 readings within 20 cents and the median of the last 5, and
-  the clock ratio with `clockReports`. See `examples/tuner/index.html`.
+  an RMS gate, 3 readings within 20 cents and the median of the last 5, a
+  gate over the background with `ignoreBackground`, and the clock ratio with
+  `clockReports`. See `examples/tuner/index.html`.
 - `chordino.d.mts`: the types of `chordino.mjs`, for the package.
 - `inspect/chordino-inspect.js`: inspection build for `examples/player`, see
   below. Not for apps, and not in the package.

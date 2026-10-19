@@ -26,6 +26,13 @@
 // did, so a lone window that lost samples, and reads sharp, stays off it. The
 // band to listen to is the page's: filter the input before the worklet.
 //
+// ignoreBackground: true also skips what is not clearly louder than the
+// background: a steady hum near the microphone, as from a speaker left on, is
+// periodic enough to read as a note. The background is the RMS of the
+// quietest windows lately, which drops at once and rises 1 dB a second, so a
+// held note takes a long while to count as background; a window has to be
+// 6 dB over it to be read.
+//
 // clockReports: true has it post { type: 'clock', ratio } about every 5 s:
 // the AudioContext time the buffers covered over the time it took them to
 // arrive. Well under 1, the audio thread is falling behind, the case in which
@@ -55,6 +62,14 @@ const STABLE_CENTS = 20;
 const STABLE_READINGS = 3;
 // Steady readings the frequency posted is the median of
 const MEDIAN_READINGS = 5;
+// With ignoreBackground, how far over the background a window has to be, and
+// how fast the background rises after a quieter window set it
+const BACKGROUND_MARGIN = 2;
+const BACKGROUND_RISE_DB = 1;
+// Quieter than this, a window is digital silence, as before the microphone
+// delivers: it leaves the background alone, as does the window after it, part
+// silence and part sound. From 0 the background could not rise again.
+const SILENCE_RMS = 1e-4;
 const CLOCK_REPORT_MS = 5000;
 // Longer than this between batches, the context was suspended rather than
 // slow, and the clock interval starts over
@@ -65,7 +80,7 @@ let session: Session | null = null;
 
 onmessage = async ({ data }: MessageEvent) => {
   if (data?.type === 'start') {
-    await start(data.port, data.sampleRate, data.clockReports === true);
+    await start(data.port, data.sampleRate, { clockReports: data.clockReports === true, ignoreBackground: data.ignoreBackground === true });
   } else if (data?.type === 'stop') {
     stop();
     post({ type: 'stopped' });
@@ -76,14 +91,19 @@ function post(message: WorkerMessage) {
   postMessage(message);
 }
 
-async function start(port: MessagePort | undefined, sampleRate: unknown, clockReports: boolean) {
+interface Options {
+  clockReports: boolean;
+  ignoreBackground: boolean;
+}
+
+async function start(port: MessagePort | undefined, sampleRate: unknown, options: Options) {
   stop();
   let current: Session | null = null;
   try {
     if (typeof port?.postMessage !== 'function' || typeof sampleRate !== 'number' || !(sampleRate > 0)) {
       throw new Error('expected { type: "start", sampleRate, port }');
     }
-    current = new Session(port, sampleRate, clockReports);
+    current = new Session(port, sampleRate, options);
     session = current;
     chordino ??= createChordino().catch((err: unknown) => {
       chordino = null;
@@ -116,12 +136,19 @@ class Session {
   private readonly port: MessagePort;
   private readonly sampleRate: number;
   private readonly clockReports: boolean;
+  private readonly ignoreBackground: boolean;
   private module: ChordinoModule | undefined;
   private pitch = 0;
   private pBuffer = 0;
   // The newest WINDOW_SIZE samples, filled from the end
   private readonly window = new Float32Array(WINDOW_SIZE);
   private filled = 0;
+  // Samples slid in since the last reading
+  private sinceRead = 0;
+  // With ignoreBackground, the RMS of the quietest windows lately, and of the
+  // window before
+  private background = Infinity;
+  private lastRms = 0;
   // The last reading, how many in a row agreed with the one before, and the
   // steady ones the median is taken over
   private lastFrequency = 0;
@@ -132,10 +159,11 @@ class Session {
   private clockWallMs = 0;
   private lastWallMs = -Infinity;
 
-  constructor(port: MessagePort, sampleRate: number, clockReports: boolean) {
+  constructor(port: MessagePort, sampleRate: number, { clockReports, ignoreBackground }: Options) {
     this.port = port;
     this.sampleRate = sampleRate;
     this.clockReports = clockReports;
+    this.ignoreBackground = ignoreBackground;
     // Answered from the start, wasm or not, as the worklet waits for each reply
     // before it sends more
     port.onmessage = ({ data }: MessageEvent<{ blocks: Block[] }>) => {
@@ -202,13 +230,22 @@ class Session {
       window.set(samples, WINDOW_SIZE - samples.length);
     }
     this.filled = Math.min(WINDOW_SIZE, this.filled + samples.length);
+    this.sinceRead += samples.length;
   }
 
   /** The frequency to post for the window, or 0 */
   private read(module: ChordinoModule, pitch: number) {
     module.HEAPF32.set(this.window, this.pBuffer >> 2);
-    if (module.pitchRms(pitch, this.pBuffer) < MIN_RMS) {
-      // Near-silent: the next note starts over
+    const rms = module.pitchRms(pitch, this.pBuffer);
+    const quiet = rms < MIN_RMS || (this.ignoreBackground && rms < this.background * BACKGROUND_MARGIN);
+    if (this.ignoreBackground && rms > SILENCE_RMS && this.lastRms > SILENCE_RMS) {
+      const seconds = this.sinceRead / this.sampleRate;
+      this.background = Math.min(rms, this.background * 10 ** ((BACKGROUND_RISE_DB * seconds) / 20));
+    }
+    this.lastRms = rms;
+    this.sinceRead = 0;
+    if (quiet) {
+      // Near-silent, or no louder than the background: the next note starts over
       this.agreeing = 0;
       this.steady = [];
       return 0;
