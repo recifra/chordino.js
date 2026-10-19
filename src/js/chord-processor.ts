@@ -1,6 +1,7 @@
 // Realtime chord detection, the AudioWorklet half: it gathers the microphone into
-// 4096-sample buffers and hands them to chord-live-worker.mjs, which runs
-// Chordino; see there for how a page connects the two. Nothing here does more
+// buffers and hands them to chord-live-worker.mjs, which runs Chordino; see
+// there for how a page connects the two. The buffers are 4096 samples long
+// unless processorOptions.bufferSize says otherwise. Nothing here does more
 // than copy. Decoding takes far longer than a render quantum, and an audio thread
 // that overruns its quanta makes iOS drop microphone samples to keep up, which
 // raises the pitch of everything heard after.
@@ -18,9 +19,9 @@ interface Block {
   nowMs: number;
 }
 
-const BUFFER_SIZE = 4096;
-// Buffers kept for a worker that does not reply, about 11 s at 48 kHz; the
-// oldest go first.
+const DEFAULT_BUFFER_SIZE = 4096;
+// Buffers kept for a worker that does not reply, about 11 s of 4096 samples at
+// 48 kHz; the oldest go first.
 const MAX_PENDING = 128;
 
 class ChordProcessor extends AudioWorkletProcessor {
@@ -29,12 +30,19 @@ class ChordProcessor extends AudioWorkletProcessor {
   // Waiting for the worker to reply to the buffers sent last
   private busy = false;
   private pending: Block[] = [];
-  private buffer = new Float32Array(BUFFER_SIZE);
+  private readonly bufferSize: number;
+  private buffer: Float32Array<ArrayBuffer>;
   private bufferIndex = 0;
   private bufferStartMs = 0;
 
-  constructor() {
+  constructor(options?: { processorOptions?: { bufferSize?: number } }) {
     super();
+    const bufferSize = options?.processorOptions?.bufferSize ?? DEFAULT_BUFFER_SIZE;
+    if (!Number.isInteger(bufferSize) || bufferSize <= 0) {
+      throw new RangeError(`bufferSize must be a positive integer, not ${bufferSize}`);
+    }
+    this.bufferSize = bufferSize;
+    this.buffer = new Float32Array(bufferSize);
     this.port.onmessage = ({ data }: MessageEvent) => {
       if (data.type === 'port') {
         this.worker = data.port as MessagePort;
@@ -57,21 +65,26 @@ class ChordProcessor extends AudioWorkletProcessor {
     if (!this.worker || !channelData) {
       return true;
     }
-    if (this.bufferIndex === 0) {
-      this.bufferStartMs = currentTime * 1000;
-    }
-    const toCopy = Math.min(channelData.length, BUFFER_SIZE - this.bufferIndex);
-    this.buffer.set(channelData.subarray(0, toCopy), this.bufferIndex);
-    this.bufferIndex += toCopy;
-    if (this.bufferIndex >= BUFFER_SIZE) {
-      this.pending.push({ samples: this.buffer, startMs: this.bufferStartMs, nowMs: Math.trunc(currentTime * 1000) });
-      if (this.pending.length > MAX_PENDING) {
-        this.pending.shift();
+    // A buffer can end partway through the quantum, when bufferSize is not a
+    // multiple of it; the rest starts the next one.
+    for (let offset = 0; offset < channelData.length;) {
+      if (this.bufferIndex === 0) {
+        this.bufferStartMs = (currentTime + offset / sampleRate) * 1000;
       }
-      // A new one, as the last goes to the worker
-      this.buffer = new Float32Array(BUFFER_SIZE);
-      this.bufferIndex = 0;
-      this.send();
+      const toCopy = Math.min(channelData.length - offset, this.bufferSize - this.bufferIndex);
+      this.buffer.set(channelData.subarray(offset, offset + toCopy), this.bufferIndex);
+      this.bufferIndex += toCopy;
+      offset += toCopy;
+      if (this.bufferIndex >= this.bufferSize) {
+        this.pending.push({ samples: this.buffer, startMs: this.bufferStartMs, nowMs: Math.trunc(currentTime * 1000) });
+        if (this.pending.length > MAX_PENDING) {
+          this.pending.shift();
+        }
+        // A new one, as the last goes to the worker
+        this.buffer = new Float32Array(this.bufferSize);
+        this.bufferIndex = 0;
+        this.send();
+      }
     }
     return true;
   }

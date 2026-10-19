@@ -61,6 +61,45 @@ describe('realtime processor and worker', () => {
     assert.ok(Math.abs(blocks[1].startMs - blocks[0].startMs - (BUFFER_SIZE / SAMPLE_RATE) * 1000) < 1e-6);
   });
 
+  /** Every block a processor with these options sends for samples, the worker never replying until the end */
+  function gather(options, samples) {
+    const processor = new ChordProcessor(options);
+    const { port1, port2 } = messageChannel();
+    const blocks = [];
+    port1.onmessage = ({ data }) => {
+      blocks.push(...data.blocks);
+      port1.postMessage({ type: 'idle' });
+    };
+    processor.port.send({ type: 'port', port: port2 });
+    const startTime = clock.currentTime;
+    stream(processor, clock, samples, SAMPLE_RATE);
+    return { blocks, startTime };
+  }
+
+  for (const bufferSize of [2048, 1000]) {
+    test(`processorOptions.bufferSize ${bufferSize} sends buffers of that size, every sample in order`, () => {
+      // 1000 is not a multiple of the render quantum: buffers end partway
+      // through one, and the rest of it starts the next
+      const samples = Float32Array.from({ length: 10 * bufferSize + 300 }, (_, i) => i / 65536);
+      const { blocks, startTime } = gather({ processorOptions: { bufferSize } }, samples);
+
+      assert.equal(blocks.length, 10);
+      blocks.forEach(({ samples: block, startMs }, n) => {
+        assert.equal(block.length, bufferSize);
+        assert.deepEqual(block, samples.subarray(n * bufferSize, (n + 1) * bufferSize), `block ${n}`);
+        const expectedMs = (startTime + (n * bufferSize) / SAMPLE_RATE) * 1000;
+        assert.ok(Math.abs(startMs - expectedMs) < 1e-6, `block ${n} starts at ${startMs}, not ${expectedMs}`);
+      });
+    });
+  }
+
+  test('rejects a bufferSize that is not a positive integer', () => {
+    for (const bufferSize of [0, -2048, 2048.5, '2048']) {
+      assert.throws(() => new ChordProcessor({ processorOptions: { bufferSize } }), RangeError);
+    }
+    assert.equal(gather({}, new Float32Array(BUFFER_SIZE)).blocks[0].samples.length, BUFFER_SIZE);
+  });
+
   test('chords.mp3 goes through G, C, F', async () => {
     const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
     assert.equal(sampleRate, SAMPLE_RATE);
