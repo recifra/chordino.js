@@ -60,6 +60,15 @@ static const double progressSalience = 0.98;
 // how much say the bass note has; it is a plain ratio between two comparable
 // quantities rather than a gain applied to one of them.
 static const double bassWeight = 0.6;
+// Score factor of the inversions (C/E, G/B), on top of the note-count penalty. A
+// plain chord has two templates, its root in the bass and no bass note in
+// particular, which split its salience between them, while each inversion has
+// one; so where the bass says little, as under a phone or tablet microphone that
+// barely hears it, or a hum sitting on B, an inversion led each of them and the
+// decoder took it. Played in root position, G came out as G/B and C as C/G. An
+// inversion now has to be clearly in the bass. On training.mp3 and voicing.mp3,
+// 4 to 5 points more chords right to the inversion, about 1 less to the root.
+static const double slashPenalty = 0.97;
 // Leaky integrator applied to chroma before chord matching (forwards and backwards,
 // see chordino_decode), so a chord needs to be
 // sustained for roughly this long to dominate the signal used for scoring -- a
@@ -371,6 +380,9 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         }
         if (iChord != nChord - 1 && noteCount < 3) {
             noteCountPenalty[iChord] = pow(0.93, 3 - noteCount);
+        }
+        if (strchr(c->dictionary->names[iChord], '/')) {
+            noteCountPenalty[iChord] *= slashPenalty;
         }
     }
     //
