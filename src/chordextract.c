@@ -1,3 +1,4 @@
+#include "pitch.h"
 #include "session.h"
 
 #include <emscripten/emscripten.h>
@@ -103,4 +104,26 @@ void getPartialResult(session_t *session) {
 EMSCRIPTEN_KEEPALIVE
 void forgetBefore(session_t *session, long milliseconds) {
     chordino_forget_before(session->chordino, realtime_from_seconds(milliseconds / 1000.0));
+}
+
+// The tuner's detector (pitch.c), for windows of size samples; NULL unless
+// size is even
+EMSCRIPTEN_KEEPALIVE
+pitch_t *createPitch(float sampleRate, int size) {
+    return pitch_create(sampleRate, size);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void releasePitch(pitch_t *pitch) {
+    pitch_destroy(pitch);
+}
+
+EMSCRIPTEN_KEEPALIVE
+double detectPitch(pitch_t *pitch, const float *buffer) {
+    return pitch_detect(pitch, buffer);
+}
+
+EMSCRIPTEN_KEEPALIVE
+double pitchRms(pitch_t *pitch, const float *buffer) {
+    return pitch_rms(pitch, buffer);
 }

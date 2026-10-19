@@ -26,6 +26,10 @@ Module['setProgressCallback'] = (callback) => {
   progressCallback = callback ?? null;
   _setProgressReports(progressCallback !== null);
 };
+Module['createPitch'] = (sampleRate, size) => _createPitch(sampleRate, size);
+Module['releasePitch'] = (pitch) => _releasePitch(pitch);
+Module['detectPitch'] = (pitch, buffer) => _detectPitch(pitch, buffer);
+Module['pitchRms'] = (pitch, buffer) => _pitchRms(pitch, buffer);
 // EXPORT_KEEPALIVE=0 leaves every C function off Module, these two included
 Module['_malloc'] = _malloc;
 Module['_free'] = _free;

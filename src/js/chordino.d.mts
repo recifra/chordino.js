@@ -1,6 +1,6 @@
 // Types of chordino.mjs, the module src/build.sh compiles; src/chordextract.js
 // puts this API over the C functions src/chordextract.c exports. Pointers
-// into the wasm heap and plugin instances are plain numbers.
+// into the wasm heap, plugin instances and pitch detectors are plain numbers.
 
 /** One chord Chordino read: its label ('N' for no chord) and when it starts, in seconds */
 export interface Chord {
@@ -26,6 +26,16 @@ export interface ChordinoModule {
   releasePlugin(instance: number): void;
   /** Has getResult report its progress, from 0 to 1; null stops it */
   setProgressCallback(callback: ((done: number) => void) | null): void;
+  /**
+   * A YIN pitch detector for windows of size samples (4096 reaches A0 at
+   * 48 kHz). 0 unless size is even.
+   */
+  createPitch(sampleRate: number, size: number): number;
+  /** Fundamental of the size samples at buffer, in Hz; 0 when YIN finds none */
+  detectPitch(pitch: number, buffer: number): number;
+  /** RMS of the size samples at buffer */
+  pitchRms(pitch: number, buffer: number): number;
+  releasePitch(pitch: number): void;
   _malloc(size: number): number;
   _free(pointer: number): void;
   /** The heap as floats; replaced when it grows, so read it again after every call */
