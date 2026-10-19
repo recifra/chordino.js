@@ -1,6 +1,8 @@
 #ifndef CHORDINO_CHORDINO_H
 #define CHORDINO_CHORDINO_H
 
+#include <stdbool.h>
+
 #include "realtime.h"
 
 #ifdef __cplusplus
@@ -46,7 +48,10 @@ typedef struct {
     const float *logLikelihood;
 } chordino_result_t;
 
-chordino_t *chordino_create(float sampleRate);
+// With removeBackground, each frame first loses what has stayed in its spectrum
+// for a long while, as a hum near a live microphone does (see remove_background
+// in chordino.c)
+chordino_t *chordino_create(float sampleRate, bool removeBackground);
 void chordino_destroy(chordino_t *chordino);
 // Forgets every frame, and the tuning estimated from them
 void chordino_reset(chordino_t *chordino);

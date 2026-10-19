@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, test } from 'node:test';
 
-import { concat, decodeMp3, detectChords, detectPartial, loadChordino, paths, synthChord } from './helpers.js';
+import { concat, decodeMp3, detectChords, detectPartial, loadChordino, paths, roomTone, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
 
@@ -120,7 +120,8 @@ describe('offline extraction', () => {
 
   test('initializePlugin(..., true) gets the same chords half a block sooner', () => {
     const { Module } = chordino;
-    const samples = concat(synthChord(voicings.C, 2, SAMPLE_RATE), synthChord(voicings.Am, 2, SAMPLE_RATE));
+    // From a quiet room: realtime also takes the background off, from the first frame on
+    const samples = concat(roomTone(1, SAMPLE_RATE), synthChord(voicings.C, 2, SAMPLE_RATE), synthChord(voicings.Am, 2, SAMPLE_RATE));
     const read = (realtime) => {
       const instance = Module.initializePlugin(SAMPLE_RATE, 4096, realtime);
       try {

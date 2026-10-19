@@ -10,7 +10,8 @@ session_t *session_create(float sampleRate, int inputBlockSize, bool realtime) {
     int stepSize = CHORDINO_STEP_SIZE;
     int blockSize = CHORDINO_BLOCK_SIZE;
     session_t *session = malloc(sizeof(session_t));
-    session->chordino = chordino_create(sampleRate);
+    // Live, the microphone hears the room: a hum there is no part of the music
+    session->chordino = chordino_create(sampleRate, realtime);
     session->sampleRate = sampleRate;
     session->realtime = realtime;
     session->inputBlockSize = inputBlockSize;

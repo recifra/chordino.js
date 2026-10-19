@@ -45,7 +45,9 @@ void setProgressReports(bool enabled) {
 // a block (186 ms at 44.1 kHz) after the end of its window. With realtime set,
 // each block is analysed as it comes and its timestamp moved to its centre
 // instead: the same frames minus the first few, each out half a block sooner,
-// which is what the realtime worklet wants.
+// which is what the realtime worklet wants. Realtime also takes the steady
+// background off every frame (remove_background in chordino.c): the microphone
+// hears the room, and a hum there is no part of the music.
 EMSCRIPTEN_KEEPALIVE
 session_t *initializePlugin(
     float samplerate,

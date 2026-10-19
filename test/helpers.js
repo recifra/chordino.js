@@ -139,6 +139,19 @@ export function synthChord(notes, seconds, sampleRate) {
   return out;
 }
 
+/**
+ * A quiet room, white noise at -60 dB, the same every time. Live sessions take
+ * the steady background off and start it from the first frame, so a test that
+ * plays a chord from the first sample has it taken for the background.
+ */
+export function roomTone(seconds, sampleRate) {
+  let seed = 1;
+  return Float32Array.from({ length: Math.round(seconds * sampleRate) }, () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return 0.001 * Math.sqrt(3) * ((2 * seed) / 2147483648 - 1);
+  });
+}
+
 export function concat(...parts) {
   const out = new Float32Array(parts.reduce((length, part) => length + part.length, 0));
   let offset = 0;

@@ -103,6 +103,14 @@ static const double noConfidenceDamping = 0.01;
 // seconds were smoothed away even where the chroma clearly moved. 1.3^4: the
 // gain levels off there, sharper only splits chords into more segments.
 static const double salienceBase = 2.8561;
+// How fast the background (see remove_background) rises after a quieter frame
+// set it, in dB a second. A note's partials stand some 40 dB or more over the
+// floor of their bins, so one held as loud as it started needs over a minute to
+// lose any of itself; a hum stays as loud for as long as whatever makes it is on.
+static const float backgroundRiseDb = 0.5;
+// How much over the background comes off: twice it, so a hum swaying a few dB
+// above its quietest goes too
+static const float backgroundOver = 2;
 
 enum { hamwinlength = nBPS * 6 + 1 };
 
@@ -135,6 +143,11 @@ struct chordino {
     int *kernelFftIndex;
     int *kernelNoteIndex;
     float *magnitude;           // chordino_process's, blockSize / 2
+    // With removeBackground: the background of each magnitude bin, whether a
+    // frame has set it yet, and what it is multiplied by from one frame to the next
+    float *background;
+    bool backgroundSet;
+    float backgroundRise;
     float *dict;                // the note dictionary, nNote bins for each of 84 semitones
     float hw[hamwinlength];
     chord_dictionary_t *dictionary;
@@ -148,7 +161,7 @@ struct chordino {
     chordino_result_t result;
 };
 
-chordino_t *chordino_create(float sampleRate) {
+chordino_t *chordino_create(float sampleRate, bool removeBackground) {
     chordino_t *c = calloc(1, sizeof(chordino_t));
     c->inputSampleRate = sampleRate;
     c->frameTimes = vector_create(sizeof(realtime_t));
@@ -192,6 +205,10 @@ chordino_t *chordino_create(float sampleRate) {
     c->blockSize = blockSize;
     c->frameCount = 0;
     c->magnitude = malloc(c->blockSize/2 * sizeof(float));
+    if (removeBackground) {
+        c->background = malloc(c->blockSize/2 * sizeof(float));
+        c->backgroundRise = pow(10, backgroundRiseDb * CHORDINO_STEP_SIZE / sampleRate / 20);
+    }
     int tempn = nNote * c->blockSize/2;
     float *tempkernel = malloc(tempn * sizeof(float));
 
@@ -224,6 +241,7 @@ void chordino_destroy(chordino_t *c) {
     chord_dictionary_destroy(c->dictionary);
     free(c->dict);
     free(c->magnitude);
+    free(c->background);
     free(c->kernelValue);
     free(c->kernelFftIndex);
     free(c->kernelNoteIndex);
@@ -244,6 +262,7 @@ void chordino_destroy(chordino_t *c) {
 void chordino_reset(chordino_t *c) {
     // Clear buffers, reset stored values, etc
     c->frameCount = 0;
+    c->backgroundSet = false;
     vector_clear(&c->frameTimes);
     vector_clear(&c->logSpectrum);
     for (int iBPS = 0; iBPS < nBPS; ++iBPS) {
@@ -268,6 +287,25 @@ void chordino_forget_before(chordino_t *c, realtime_t start) {
 #endif
 }
 
+// Takes the steady background off the magnitude spectrum, in place. The
+// background of a bin follows the quietest it has been lately, the way
+// ignoreBackground in tuner-live-worker.mjs follows the RMS: it drops at once to
+// a quieter frame and rises backgroundRiseDb a second after it. A hum or a
+// whine stays as loud frame after frame, so it is all background and goes, and
+// it goes before the tuning is estimated, which it would otherwise pull. A note
+// rises over the floor and falls back to it once it ends; only the floor comes
+// off it. Under a microphone near a speaker left on, a 60 Hz hum and a tone at
+// 397 Hz, a quarter-tone off G4, were all that most of the frames of typing
+// and talking had in tune, and the chords the matcher read in them had G.
+static void remove_background(chordino_t *c, float *magnitude) {
+    for (int iBin = 0; iBin < (int)(c->blockSize/2); iBin++) {
+        float background = c->backgroundSet ? fminf(magnitude[iBin], c->background[iBin] * c->backgroundRise) : magnitude[iBin];
+        c->background[iBin] = background;
+        magnitude[iBin] = fmaxf(magnitude[iBin] - backgroundOver * background, 0);
+    }
+    c->backgroundSet = true;
+}
+
 void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
     c->frameCount++;
     float *magnitude = c->magnitude;
@@ -279,6 +317,13 @@ void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
                                 fbuf[2 * iBin + 1] * fbuf[2 * iBin + 1]);
         if (magnitude[iBin]>c->blockSize*1.0) magnitude[iBin] = c->blockSize; // a valid audio signal (between -1 and 1) should not be limited here.
         if (maxmag < magnitude[iBin]) maxmag = magnitude[iBin];
+    }
+
+    // Quiet frames too, so that the background starts from the room and not from
+    // the first note played in it; not digital silence, as a microphone sends
+    // before its first samples, from which it could never rise again
+    if (c->background && maxmag > 0) {
+        remove_background(c, magnitude);
     }
 
     if (maxmag < 2) {

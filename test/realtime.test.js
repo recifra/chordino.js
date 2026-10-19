@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, beforeEach, describe, test } from 'node:test';
 
-import { concat, decodeMp3, loadLive, messageChannel, paths, RENDER_QUANTUM, stream, synthChord } from './helpers.js';
+import { concat, decodeMp3, loadLive, messageChannel, paths, RENDER_QUANTUM, roomTone, stream, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
 const BUFFER_SIZE = 4096;
@@ -104,7 +104,7 @@ describe('realtime processor and worker', () => {
     const { samples, sampleRate } = await decodeMp3(paths.chordsMp3);
     assert.equal(sampleRate, SAMPLE_RATE);
     const { processor } = await listen();
-    stream(processor, clock, samples, sampleRate);
+    stream(processor, clock, concat(roomTone(0.5, sampleRate), samples), sampleRate);
 
     const chords = detected();
     // The very first buffers have too little context to pin the chord type down
@@ -122,7 +122,31 @@ describe('realtime processor and worker', () => {
       ['G2', 'G3', 'B3', 'D4'],
     ];
     const { processor } = await listen();
-    stream(processor, clock, concat(...voicings.map((notes) => synthChord(notes, 2, SAMPLE_RATE))), SAMPLE_RATE);
+    stream(processor, clock, concat(roomTone(1, SAMPLE_RATE), ...voicings.map((notes) => synthChord(notes, 2, SAMPLE_RATE))), SAMPLE_RATE);
+
+    assert.deepEqual(detected(), ['C', 'Am', 'F', 'G']);
+  });
+
+  /** A hum, as from a speaker left on near the microphone: mains and a whine a quarter-tone off G4 */
+  function hum(seconds) {
+    return Float32Array.from({ length: Math.round(seconds * SAMPLE_RATE) }, (_, i) => {
+      const t = i / SAMPLE_RATE;
+      return 0.003 * Math.sin(2 * Math.PI * 60 * t) + 0.002 * Math.sin(2 * Math.PI * 397 * t);
+    });
+  }
+
+  const mix = (...parts) => parts.reduce((sum, part) => sum.map((value, i) => value + part[i]));
+
+  test('follows the chords played over a hum', async () => {
+    const voicings = [
+      ['C3', 'C4', 'E4', 'G4'],
+      ['A2', 'A3', 'C4', 'E4'],
+      ['F2', 'A3', 'C4', 'F4'],
+      ['G2', 'G3', 'B3', 'D4'],
+    ];
+    const chords = concat(roomTone(1, SAMPLE_RATE), ...voicings.map((notes) => synthChord(notes, 2, SAMPLE_RATE)));
+    const { processor } = await listen();
+    stream(processor, clock, mix(chords, hum(chords.length / SAMPLE_RATE)), SAMPLE_RATE);
 
     assert.deepEqual(detected(), ['C', 'Am', 'F', 'G']);
   });
@@ -148,7 +172,7 @@ describe('realtime processor and worker', () => {
   test('posts a chord delayMs after its audio, with the time it started', async () => {
     // Frames come out about 0.2 s after their audio, on top of delayMs. With no
     // delay the newest frames also have to settle before the change shows.
-    const samples = concat(synthChord(['A2', 'A3', 'C4', 'E4'], 2, SAMPLE_RATE), synthChord(['F2', 'A3', 'C4', 'F4'], 3, SAMPLE_RATE));
+    const samples = concat(roomTone(1, SAMPLE_RATE), synthChord(['A2', 'A3', 'C4', 'E4'], 2, SAMPLE_RATE), synthChord(['F2', 'A3', 'C4', 'F4'], 3, SAMPLE_RATE));
     const posted = {};
     const postMessage = globalThis.postMessage;
     try {
@@ -157,8 +181,8 @@ describe('realtime processor and worker', () => {
         const startTime = clock.currentTime;
         globalThis.postMessage = (data) => {
           if (data.type === 'chordResult' && data.result.chord === 'F') {
-            posted[delayMs] = clock.currentTime - startTime;
-            assert.ok(Math.abs(data.result.time - startTime - 2) < 0.15, `F starts at ${data.result.time - startTime}`);
+            posted[delayMs] = clock.currentTime - startTime - 1;
+            assert.ok(Math.abs(data.result.time - startTime - 3) < 0.15, `F starts at ${data.result.time - startTime}`);
           }
         };
         stream(processor, clock, samples, SAMPLE_RATE);
@@ -203,7 +227,7 @@ describe('realtime processor and worker', () => {
 
     assert.deepEqual(worker.messages, [{ type: 'ready' }]);
     worker.messages.length = 0;
-    stream(processor, clock, synthChord(['F2', 'A3', 'C4', 'F4'], 3, SAMPLE_RATE), SAMPLE_RATE);
+    stream(processor, clock, concat(roomTone(1, SAMPLE_RATE), synthChord(['F2', 'A3', 'C4', 'F4'], 3, SAMPLE_RATE)), SAMPLE_RATE);
     assert.deepEqual(detected(), ['F']);
   });
 

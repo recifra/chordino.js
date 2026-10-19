@@ -11,7 +11,8 @@ export interface Chord {
 export interface ChordinoModule {
   /**
    * A plugin instance, fed blockSize samples at a time. realtime gets each frame
-   * out half a block sooner, at the cost of the first few. 0 when it fails.
+   * out half a block sooner, at the cost of the first few, and takes the steady
+   * background of a live microphone, such as a hum, off each one. 0 when it fails.
    */
   initializePlugin(sampleRate: number, blockSize: number, realtime?: boolean): number;
   /** Feeds the blockSize samples at buffer, which start at milliseconds */
