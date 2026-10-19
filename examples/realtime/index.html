@@ -12,6 +12,9 @@
   canvas { cursor: default; }
   #input { display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
   #download:disabled { opacity: 0.5; cursor: default; }
+  /* Under the silence gate: shown, but never posted */
+  #newest-chord.quiet, #candidates.quiet { opacity: 0.35; }
+  #candidates.quiet .bar { background: var(--muted); }
   .ok { color: var(--ok); }
   .bad { color: var(--bad); }
 </style>

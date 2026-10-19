@@ -6,7 +6,8 @@
 // edge. Left of the read line, delayMs behind the newest frame, frames are
 // settled: they show the values the worker's decision there was made on. Right
 // of it they still move with every buffer, and the chords there are the Viterbi
-// path as it stands, not yet posted.
+// path as it stands, not yet posted; grayed where the input is under the
+// silence gate, where it never will be.
 
 import { chordKey } from '../player/chords.js';
 import { buildExport } from '../player/export.js';
@@ -35,6 +36,8 @@ const GATE_DB = 20 * Math.log10(GATE_RMS);
 // Each frame is normalized on its own, which paints a quiet room's noise as
 // brightly as a chord; frames under the gate are drawn this dim instead.
 const QUIET_DIM = 0.15;
+// And the labels of chords only seen there
+const QUIET_LABEL = 0.5;
 const PROCESSING = { echoCancellation: 'echo', noiseSuppression: 'noise', autoGainControl: 'gain' };
 
 const PANELS = [
@@ -96,6 +99,9 @@ let stoppedAt = null;
 let settled = [];
 let pending = [];
 let path = [];
+// The path cut where the sustained level crosses the gate, the pieces under it,
+// which the worker never posts, marked quiet
+let gatedPath = [];
 let posted = [];
 let readAt = null;
 let newest = null;
@@ -267,6 +273,8 @@ function onWorkerMessage(data) {
       settled.splice(0, drop);
     }
     ({ pending, path, readAt, newest } = data);
+    // With delayMs 0 nothing is pending, and the path starts on settled frames
+    gatedPath = gate(path, visibleFrames(path[0]?.start ?? Infinity));
     version++;
     exportButton.disabled = settled.length === 0;
     downloadButton.disabled = false;
@@ -291,6 +299,7 @@ function clearData() {
   settled = [];
   pending = [];
   path = [];
+  gatedPath = [];
   posted = [];
   readAt = null;
   newest = null;
@@ -449,16 +458,44 @@ function layout(panel, frames) {
   return salienceLayout(frames);
 }
 
+/**
+ * The segments cut where the sustained level of the frames crosses the gate,
+ * each piece keeping the index of its segment and marked quiet under the gate.
+ * There the matcher scores what is left of the noise, near evenly, so whatever
+ * leads changes every frame and the worker never posts it.
+ */
+function gate(segments, frames) {
+  const runs = [];
+  for (const frame of frames) {
+    const quiet = frame.sustained < GATE_RMS;
+    if (runs.at(-1)?.quiet === quiet) {
+      continue;
+    }
+    const start = frame.time - 0.5 / frameRate;
+    if (runs.length > 0) {
+      runs.at(-1).end = start;
+    }
+    runs.push({ quiet, start: runs.length > 0 ? start : -Infinity, end: Infinity });
+  }
+  if (runs.length === 0) {
+    return segments.map((segment, index) => ({ ...segment, index, quiet: false }));
+  }
+  return segments.flatMap(({ chord, start, end }, index) => runs
+    .map((run) => ({ chord, index, quiet: run.quiet, start: Math.max(start, run.start), end: Math.min(end, run.end) }))
+    .filter((piece) => piece.end > piece.start));
+}
+
 // Rows: chords posted or on the path in view, in order of appearance, then labels
-// that win frames on their own, then N.
+// that win frames on their own, then N. A chord only seen under the gate is quiet.
 function salienceLayout(frames) {
   const { labels } = names;
   const first = frames[0]?.time ?? Infinity;
   const shown = [
     ...postedSegments(readAt ?? first).filter((segment) => segment.end >= first),
-    ...path,
-  ].map((segment) => segment.chord);
-  const onPath = [...new Set(shown)].filter((chord) => chord !== 'N' && labels.includes(chord));
+    ...gatedPath,
+  ];
+  const heard = new Set(shown.filter((segment) => !segment.quiet).map((segment) => segment.chord));
+  const onPath = [...new Set(shown.map((segment) => segment.chord))].filter((chord) => chord !== 'N' && labels.includes(chord));
   const wins = new Map();
   for (const frame of frames) {
     let best = 0;
@@ -468,6 +505,9 @@ function salienceLayout(frames) {
       }
     }
     wins.set(best, (wins.get(best) ?? 0) + 1);
+    if (frame.sustained >= GATE_RMS) {
+      heard.add(labels[best]);
+    }
   }
   const extra = [...wins]
     .filter(([label, count]) => count >= MIN_FRAME_WINS && labels[label] !== 'N' && !onPath.includes(labels[label]))
@@ -475,8 +515,8 @@ function salienceLayout(frames) {
     .slice(0, MAX_EXTRA_ROWS)
     .map(([label]) => labels[label]);
   const rows = [
-    ...onPath.map((label) => ({ bin: labels.indexOf(label), label })),
-    ...extra.map((label) => ({ bin: labels.indexOf(label), label, offPath: true })),
+    ...onPath.map((label) => ({ bin: labels.indexOf(label), label, quiet: !heard.has(label) })),
+    ...extra.map((label) => ({ bin: labels.indexOf(label), label, offPath: true, quiet: !heard.has(label) })),
     { bin: labels.indexOf('N'), label: 'N' },
   ];
   return { rows, groups: new Uint8Array(labels.length), binCount: labels.length, separators: [] };
@@ -530,7 +570,7 @@ function createLane() {
   const section = document.createElement('section');
   section.className = 'panel';
   section.innerHTML = '<h2>Chords <small>posted by chord-live-worker.mjs, from the time each reports; ' +
-    'faded, right of the read line: the Viterbi path there now, not posted yet; ' +
+    'faded, right of the read line: the Viterbi path there now, not posted yet, gray where the input is under the gate; ' +
     'ticks on top: frames the confidence gate rejected (gray: chord too close to N, purple: another root too close); ' +
     'the panels below go dim where the sustained level is under the −42 dB silence gate, where nothing is posted</small></h2>';
   const canvas = document.createElement('canvas');
@@ -686,7 +726,7 @@ function drawLane(time, frames) {
   const segments = postedSegments(readAt ?? time);
   drawSegments(context, segments, x, width, segments.length - 1);
   context.globalAlpha = 0.45;
-  drawSegments(context, path.map((segment) => ({ ...segment, start: Math.max(segment.start, readAt) })), x, width, path.length - 1);
+  drawSegments(context, gatedPath.map((piece) => ({ ...piece, start: Math.max(piece.start, readAt) })), x, width, path.length - 1);
   context.globalAlpha = 1;
   for (const frame of frames) {
     if (frame.gate) {
@@ -725,14 +765,16 @@ function drawSegments(context, segments, x, width, current) {
     if (x1 <= x0 || x1 < GUTTER || x0 > width) {
       return;
     }
-    context.fillStyle = i === current ? theme.accentSoft : i % 2 ? theme.laneB : theme.laneA;
+    // A piece of a segment cut at the gate keeps that segment's index
+    const index = segment.index ?? i;
+    context.fillStyle = segment.quiet ? theme.empty : index === current ? theme.accentSoft : index % 2 ? theme.laneB : theme.laneA;
     context.fillRect(x0, 0, x1 - x0, BAND);
     const label = segment.chord;
     const labelWidth = context.measureText(label).width;
     // Keep the label of a chord that started off-screen pinned to the left edge
     const labelX = Math.min(Math.max(x0, GUTTER) + 4, x1 - labelWidth - 4);
     if (labelX >= Math.max(x0, GUTTER) + 2) {
-      context.fillStyle = label === 'N' ? theme.muted : theme.fg;
+      context.fillStyle = label === 'N' || segment.quiet ? theme.muted : theme.fg;
       context.fillText(label, labelX, BAND / 2);
     }
   });
@@ -785,8 +827,10 @@ function drawPanel(panel, time, frames) {
       return;
     }
     context.font = `${row.offPath ? 'italic ' : ''}${fontSize}px system-ui, sans-serif`;
-    context.fillStyle = row.offPath || row.label === 'N' ? theme.muted : theme.fg;
+    context.fillStyle = row.offPath || row.quiet || row.label === 'N' ? theme.muted : theme.fg;
+    context.globalAlpha = row.quiet ? QUIET_LABEL : 1;
     context.fillText(row.label, GUTTER - 6, (y + 0.5) * panel.rowHeight);
+    context.globalAlpha = 1;
   });
   context.textAlign = 'left';
   drawReadLine(context, area, x);
@@ -813,6 +857,8 @@ function updateNow(time) {
   readoutVersion = version;
   postedChord.textContent = posted.at(-1)?.chord ?? '–';
   newestChord.textContent = path.at(-1)?.chord ?? '–';
+  // Under the gate, nothing there will be posted
+  newestChord.classList.toggle('quiet', gatedPath.at(-1)?.quiet ?? false);
 
   // Chord probabilities at the read point, where the posted chord was read
   const frame = settled.at(-1);
@@ -820,6 +866,7 @@ function updateNow(time) {
     candidates.replaceChildren();
     return;
   }
+  candidates.classList.toggle('quiet', frame.sustained < GATE_RMS);
   const row = frame.salience;
   const top = [...row.keys()].sort((a, b) => row[b] - row[a]).slice(0, 5);
   // Similar labels split the weight between them, so bars are scaled to the winner
