@@ -69,6 +69,11 @@ bandSelect.addEventListener('change', () => {
 });
 
 async function start() {
+  if (!navigator.mediaDevices) {
+    setStatus(`No microphone: browsers only give it to https and localhost pages, and this is ${location.origin}. ` +
+      'On Android, open it on localhost through adb reverse, or list this origin in chrome://flags/#unsafely-treat-insecure-origin-as-secure.');
+    return;
+  }
   listenButton.disabled = true;
   setStatus('Asking for the microphone…');
   let stream;

@@ -202,8 +202,12 @@ Controls:
   check whether the readings or the ratio change while it plays.
 
 It has to fit a phone or tablet held upright. The microphone needs a secure
-context: on the Android tablet, serve on the computer and open it through
-`adb reverse tcp:8000 tcp:8000` at `http://localhost:8000/tuner/`.
+context, which `http://<computer's IP>:8000` is not (the page says so instead
+of failing on `navigator.mediaDevices`). On the Android tablet, either connect
+it by USB and open `http://localhost:8000/tuner/` after
+`adb reverse tcp:8000 tcp:8000`, or add `http://<computer's IP>:8000` to
+`chrome://flags/#unsafely-treat-insecure-origin-as-secure` and relaunch
+Chrome.
 
 ## Steps
 
