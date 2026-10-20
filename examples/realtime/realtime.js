@@ -104,7 +104,6 @@ let path = [];
 let gatedPath = [];
 let posted = [];
 let readAt = null;
-let newest = null;
 // Bumped whenever the data changes, so panels only rebuild their images then
 let version = 0;
 let theme = readTheme();
@@ -272,7 +271,7 @@ function onWorkerMessage(data) {
     if (drop > 0) {
       settled.splice(0, drop);
     }
-    ({ pending, path, readAt, newest } = data);
+    ({ pending, path, readAt } = data);
     // With delayMs 0 nothing is pending, and the path starts on settled frames
     gatedPath = gate(path, visibleFrames(path[0]?.start ?? Infinity));
     version++;
@@ -302,7 +301,6 @@ function clearData() {
   gatedPath = [];
   posted = [];
   readAt = null;
-  newest = null;
   version++;
   exportButton.disabled = true;
   downloadButton.disabled = true;

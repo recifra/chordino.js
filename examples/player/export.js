@@ -3,7 +3,7 @@
 // the chord probabilities and the chroma by note name, sparse and rounded so
 // the file stays small and needs no index bookkeeping.
 
-import { chordKey, grade, segmentAt } from './chords.js';
+import { chordKey, segmentAt } from './chords.js';
 
 const TOP_CHORDS = 5;
 const MAX_CONFUSIONS = 30;

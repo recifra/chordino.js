@@ -60,12 +60,16 @@
   "scripts": {
     "build": "npm run build:wasm && npm run build:js",
     "build:wasm": "bash src/build.sh",
-    "build:js": "tsc -b src/js && esbuild src/js/chord-worker.ts src/js/chord-live-worker.ts src/js/chord-processor.ts src/js/tuner-live-worker.ts --outdir=build --out-extension:.js=.mjs --format=esm --target=es2022 --minify && cp src/js/chordino.d.mts build/",
+    "build:js": "npm run typecheck && esbuild src/js/chord-worker.ts src/js/chord-live-worker.ts src/js/chord-processor.ts src/js/tuner-live-worker.ts --outdir=build --out-extension:.js=.mjs --format=esm --target=es2022 --minify && cp src/js/chordino.d.mts build/",
     "test": "node --test \"test/*.test.js\"",
+    "lint": "biome lint",
+    "lint:c": "cd src && emcc -fsyntax-only -Wall -Wextra -Werror -Dkiss_fft_scalar=double nnls-chroma/*.c session.c spectrum.c window.c kissfft.c realtime.c vector.c pitch.c onset.c rhythm.c chordextract.c && emcc -fsyntax-only -Wall -Wextra -Werror -Dkiss_fft_scalar=double -DCHORDINO_INSPECT nnls-chroma/chordino.c inspect.c",
+    "typecheck": "tsc -b src/js",
     "examples": "node examples/serve.mjs",
     "prepublishOnly": "npm run build && npm test"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@types/audioworklet": "^0.0.100",
     "esbuild": "^0.28.2",
     "mpg123-decoder": "^1.0.3",

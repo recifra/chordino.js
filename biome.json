@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "src/**/*.js",
+      "src/**/*.ts",
+      "src/**/*.mts",
+      "test/**/*.js",
+      "examples/**/*.js",
+      "examples/**/*.mjs",
+      "examples/**/*.ts",
+      "examples/**/*.tsx",
+      "!examples/lib",
+      "!examples/player/chordino-inspect.js"
+    ]
+  },
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noAssignInExpressions": "off",
+        "useIterableCallbackReturn": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/js/*-worker.ts", "examples/**/*-worker.js"],
+      "linter": { "rules": { "suspicious": { "noGlobalAssign": "off" } } }
+    },
+    {
+      "includes": ["src/chordextract.js", "src/inspect.js"],
+      "linter": { "rules": { "complexity": { "useLiteralKeys": "off" } } }
+    }
+  ]
+}

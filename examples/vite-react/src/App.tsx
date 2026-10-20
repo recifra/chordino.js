@@ -52,7 +52,7 @@ function Microphone() {
   return (
     <section>
       <h2>Chords from the microphone</h2>
-      <button id="listen" disabled={state.status === 'starting'} onClick={() => void (active ? stop() : start())}>
+      <button type="button" id="listen" disabled={state.status === 'starting'} onClick={() => void (active ? stop() : start())}>
         {active ? 'Stop' : 'Listen'}
       </button>
       {state.status === 'starting' && <p>Starting…</p>}
