@@ -141,11 +141,12 @@ export function synthChord(notes, seconds, sampleRate) {
 
 /**
  * A band playing chords (lists of notes, bass first) at bpm, one a bar of
- * numerator beats: a kick drum and the bass note on each downbeat, a snare on
- * the backbeats (2 and 4 of 4, 3 of 3, the fourth eighth of 6), and a hi-hat
- * and the rest of the chord, decaying like a piano, on every beat. bpm counts
- * the beats of the numerator, the eighths in 6/8. Starts with lead seconds of
- * a quiet room; the same every time.
+ * numerator beats: a kick drum and the bass note on each downbeat (and on the
+ * seventh eighth of 12), a snare on the backbeats (2 and 4 of 4, 3 of 3, the
+ * fourth eighth of 6, the fourth and tenth of 12), and a hi-hat and the rest
+ * of the chord, decaying like a piano, on every beat, struck harder on each
+ * three eighths of 6 and 12. bpm counts the beats of the numerator, the
+ * eighths in 6/8. Starts with lead seconds of a quiet room; the same every time.
  */
 export function synthBand({ bpm, numerator, chords, sampleRate, lead = 0.5 }) {
   const beat = 60 / bpm;
@@ -180,19 +181,22 @@ export function synthBand({ bpm, numerator, chords, sampleRate, lead = 0.5 }) {
     previous = value;
     return 0.06 * high * Math.exp(-t * 80);
   };
-  const backbeats = numerator === 6 ? [3] : numerator === 3 ? [2] : [1, 3];
+  const backbeats = { 3: [2], 4: [1, 3], 6: [3], 12: [3, 9] }[numerator];
+  const kicks = numerator === 12 ? [0, 6] : [0];
+  const compound = numerator === 6 || numerator === 12;
   chords.forEach((notes, index) => {
     const start = lead + index * bar;
     const root = 440 * 2 ** ((midi(notes[0]) - 69) / 12);
-    add(start, 0.25, kick);
     add(start, bar, (t) => 0.12 * tone(root, t) * Math.exp(-t * 2));
     for (let i = 0; i < numerator; i++) {
       const at = start + i * beat;
+      const strength = compound && i % 3 !== 0 ? 0.5 : 1;
       add(at, 0.05, hat);
+      if (kicks.includes(i)) add(at, 0.25, kick);
       if (backbeats.includes(i)) add(at, 0.2, snare);
       for (const note of notes.slice(1)) {
         const frequency = 440 * 2 ** ((midi(note) - 69) / 12);
-        add(at, beat, (t) => 0.04 * tone(frequency, t) * Math.exp(-t * 4));
+        add(at, beat, (t) => 0.04 * strength * tone(frequency, t) * Math.exp(-t * 4));
       }
     }
   });

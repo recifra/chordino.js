@@ -41,6 +41,7 @@ describe('beats', () => {
     { bpm: 72, numerator: 4, meter: [4, 4] },
     { bpm: 90, numerator: 3, meter: [3, 4] },
     { bpm: 150, numerator: 6, meter: [6, 8] },
+    { bpm: 180, numerator: 12, meter: [12, 8] },
   ]) {
     test(`${band.meter.join('/')} at ${band.bpm} BPM`, () => {
       const result = beatsOf(synthBand({ ...band, chords: SONG, sampleRate: SAMPLE_RATE, lead: LEAD }));

@@ -58,9 +58,10 @@ Everything lands in `build/`:
   towards 120 BPM, and the beats are Ellis's dynamic programming over it,
   with the period of every few seconds free to drift up to a quarter off it,
   as a band playing live does.
-  The bars are where Chordino's chords change and the bass comes in: two
-  beats or four a bar, or three, or six eighths of 6/8, whichever stands out
-  most, with a Viterbi pass that lets a bar start out of turn where the
+  The bars are where Chordino's chords change and the bass comes in: four
+  beats a bar (2/4 comes out as 4/4), or three, or six eighths of 6/8,
+  whichever stands out most, and threes only where the onset strength repeats
+  more every three beats than every two as well, with a Viterbi pass that lets a bar start out of turn where the
   accents move for good. Beats that split in three, a third and two thirds
   into them more than halfway, make the meter compound, 6/8 or 12/8, with the
   thirds as its beats. None of it changes a bit of the chords.

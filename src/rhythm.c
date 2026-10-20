@@ -32,7 +32,7 @@ TUNABLE double driftCost = 2;       // what a stretch loses for each octave² it
 TUNABLE double changeLead = 0.5;    // of a beat before it, where its chord changes count
 TUNABLE double changeWeight = 1;
 TUNABLE double bassWeight = 1;
-TUNABLE double twoBias = 1;
+TUNABLE double threesWeight = 20;   // of the onset strength repeating every three beats more than two
 TUNABLE double fourBias = 1.3;      // 4 beats a bar over 2 or 3, at the same contrast
 TUNABLE double jumpCost = 8;        // accent a bar has to gain to start out of turn
 TUNABLE double sixBias = 1;         // 6 eighths a bar over 3 beats
@@ -421,18 +421,32 @@ ONCE static double contrast(const double *accent, int beatCount, int every) {
     return best;
 }
 
+// How much more the onset strength (detrended, as x) repeats every three beats
+// of lag than every two, against its energy: Ellis's duple or triple meter
+ONCE static double threes_over_twos(const double *x, int count, double lag) {
+    double energy = 0, twos = 0, threes = 0;
+    int two = nearest(lag * 2), three = nearest(lag * 3);
+    for (int i = 0; i < count; ++i) {
+        energy += x[i] * x[i];
+        if (i + two < count) twos += x[i] * x[i + two];
+        if (i + three < count) threes += x[i] * x[i + three];
+    }
+    return energy > 0 ? (threes - twos) / energy : 0;
+}
+
 // Beats a bar: those whose downbeats are the most accented over the other
-// beats. Whether the beats go in twos or
-// threes comes first, as the more beats a bar the more ways there are for one
-// of them to stand out by chance; then twos make 2 or 4 a bar, and threes 3,
-// or 6 for beats as fast as the eighths of 6/8.
-ONCE static int find_bars(const double *accent, int beatCount, double bpm) {
-    double two = twoBias > 0 ? contrast(accent, beatCount, 2) * twoBias : -INFINITY;
+// beats. Whether the beats go in twos or threes comes first, from the accents
+// and from how the onset strength repeats (threes, threes_over_twos), as the
+// more beats a bar the more ways there are for one of them to stand out by
+// chance; then twos make 4 a bar, as 2/4 is rare and 4/4 counts the same
+// beats, and threes 3, or 6 for beats as fast as the eighths of 6/8.
+ONCE static int find_bars(const double *accent, int beatCount, double bpm, double threes) {
+    double two = contrast(accent, beatCount, 2);
     double three = contrast(accent, beatCount, 3);
     double four = contrast(accent, beatCount, 4) * fourBias;
     double six = bpm >= eighthBpm ? contrast(accent, beatCount, 6) * sixBias : -INFINITY;
-    if (three > fmax(two, four)) return six > three ? 6 : 3;
-    return four >= two ? 4 : 2;
+    if (three + threesWeight * threes > fmax(two, four)) return six > three ? 6 : 3;
+    return 4;
 }
 
 // Where in its bar of perBar each beat falls, from 0: the downbeats every
@@ -486,18 +500,25 @@ ONCE const rhythm_result_t *rhythm_decode(rhythm_t *rhythm, const chordino_resul
     double lag = estimate_period(x, count, onset->period);
     double *periods = malloc(count * sizeof(double));
     local_periods(x, count, lag, onset->period, periods);
-    free(x);
     int *beats = malloc(count * sizeof(int));
     int beatCount = lag > 0 ? track_beats(strength, count, lag, periods, beats) : 0;
     free(periods);
     if (beatCount < 2) {
+        free(x);
         free(beats);
         return &rhythm->result;
     }
+    // The beats' own period, for how they group
+    double *intervals = malloc((beatCount - 1) * sizeof(double));
+    for (int i = 0; i + 1 < beatCount; ++i) intervals[i] = beats[i + 1] - beats[i];
+    double interval = median(intervals, beatCount - 1);
+    free(intervals);
+    double threes = threes_over_twos(x, count, interval);
+    free(x);
 
     double *accent = malloc(beatCount * sizeof(double));
     accents(rhythm, chords, beats, beatCount, accent);
-    int perBar = find_bars(accent, beatCount, 60 / (lag * onset->period));
+    int perBar = find_bars(accent, beatCount, 60 / (lag * onset->period), threes);
     int *positions = malloc(beatCount * sizeof(int));
     place_bars(accent, beatCount, perBar, positions);
     free(accent);
@@ -521,10 +542,7 @@ ONCE const rhythm_result_t *rhythm_decode(rhythm_t *rhythm, const chordino_resul
         }
     }
     // The tempo is the median interval between beats
-    double *intervals = malloc((beatCount - 1) * sizeof(double));
-    for (int i = 0; i + 1 < beatCount; ++i) intervals[i] = beats[i + 1] - beats[i];
-    result->bpm = 60 / (median(intervals, beatCount - 1) * onset->period) * split;
-    free(intervals);
+    result->bpm = 60 / (interval * onset->period) * split;
     free(positions);
     free(beats);
     result->beatCount = rhythm->beats.count;

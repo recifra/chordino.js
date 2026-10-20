@@ -86,7 +86,8 @@ The worker posts, in order:
   for the downbeat, and `result.tempo` is `{ bpm, meter: [numerator,
   denominator] }`, or `null` where there are no beats (silence, speech). The
   BPM counts the note of the denominator, as the beats do: the eighths in 6/8
-  (two groups of three a bar) and 12/8, the quarters in 4/4, 3/4 and 2/4;
+  (two groups of three a bar) and 12/8, the quarters in 4/4 and 3/4 (2/4
+  comes out as 4/4);
 - `{ type: 'error', message }` in place of `done` when the analysis fails.
 
 A worker can be posted any number of recordings, one after another.
