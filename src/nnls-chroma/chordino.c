@@ -69,6 +69,27 @@ static const double bassWeight = 0.6;
 // inversion now has to be clearly in the bass. On training.mp3 and voicing.mp3,
 // 4 to 5 points more chords right to the inversion, about 1 less to the root.
 static const double slashPenalty = 0.97;
+// Score factor of a chord with the same notes as one on another root (Fsus2 and
+// Csus4, Am7 and C6) where that other root is the lowest note and no bass is
+// played. Such chords differ only in their bass templates, so with nothing in the
+// bass their choice was left to whatever stray energy sat there, and under a
+// tablet's microphone F4 G4 C5 read as Csus4 and Bb3 Eb4 F4 as Ebsus2: NNLS
+// hears the root a fourth implies under it (C under G4 C5, Eb under Bb3 Eb4), and
+// a speaker's distortion adds it too (C5 - G4 = C3, 2 Bb3 - Eb4 = Eb3). The ear
+// names the chord from its lowest note. Only chords of the same notes give way,
+// so a lowest E says nothing about C against Em, and played over a bass the
+// bass templates decide as before. Streamed live, training.mp3 gets 0.5 points
+// more chords right, and both it and voicing.mp3 0.3 to 0.4 more roots.
+static const double otherRootFactor = 0.95;
+// The lowest note of a frame is the lowest whose NNLS activation holds at least
+// this share of the strongest one's through lowestNoteFrames frames either side:
+// stray notes come and go, and the ones that distortion and NNLS add under a
+// chord are weaker than its notes.
+static const double lowestNoteShare = 0.7;
+static const int lowestNoteFrames = 2;
+// A bass is played where a note the bass window weighs at least half holds this
+// share of the strongest
+static const double playedBassShare = 0.5;
 // Leaky integrator applied to chroma before chord matching (forwards and backwards,
 // see chordino_decode), so a chord needs to be
 // sustained for roughly this long to dominate the signal used for scoring -- a
@@ -130,11 +151,9 @@ struct chordino {
     // estimated when they were first decoded. Chord matching runs on a smoothed
     // copy.
     vector_t rawChromas;
-#ifdef CHORDINO_INSPECT
-    // The 84 semitone activations NNLS found for each of those frames, for
-    // chordino_inspect_frame
+    // The 84 semitone activations NNLS found for each of those frames, for the
+    // lowest note (see lowest_notes) and chordino_inspect_frame
     vector_t semitones;
-#endif
     float meanTunings[nBPS];
     float sinvalues[nBPS];
     float cosvalues[nBPS];
@@ -168,9 +187,7 @@ chordino_t *chordino_create(float sampleRate, bool removeBackground) {
     c->frameTimes = vector_create(sizeof(realtime_t));
     c->logSpectrum = vector_create(nNote * sizeof(float));
     c->rawChromas = vector_create(24 * sizeof(float));
-#ifdef CHORDINO_INSPECT
     c->semitones = vector_create(84 * sizeof(float));
-#endif
     c->chords = vector_create(sizeof(chordino_chord_t));
     c->notes = vector_create(sizeof(chordino_note_t));
     c->times = vector_create(sizeof(realtime_t));
@@ -249,9 +266,7 @@ void chordino_destroy(chordino_t *c) {
     vector_destroy(&c->frameTimes);
     vector_destroy(&c->logSpectrum);
     vector_destroy(&c->rawChromas);
-#ifdef CHORDINO_INSPECT
     vector_destroy(&c->semitones);
-#endif
     vector_destroy(&c->chords);
     vector_destroy(&c->notes);
     vector_destroy(&c->times);
@@ -270,9 +285,7 @@ void chordino_reset(chordino_t *c) {
         c->meanTunings[iBPS] = 0;
     }
     vector_clear(&c->rawChromas);
-#ifdef CHORDINO_INSPECT
     vector_clear(&c->semitones);
-#endif
 }
 
 void chordino_forget_before(chordino_t *c, realtime_t start) {
@@ -283,9 +296,7 @@ void chordino_forget_before(chordino_t *c, realtime_t start) {
     vector_erase(&c->logSpectrum, 0, drop);
     int dropChroma = drop < c->rawChromas.count ? drop : c->rawChromas.count;
     vector_erase(&c->rawChromas, 0, dropChroma);
-#ifdef CHORDINO_INSPECT
     vector_erase(&c->semitones, 0, dropChroma);
-#endif
 }
 
 // Takes the steady background off the magnitude spectrum, in place. The
@@ -317,6 +328,35 @@ static void remove_background(chordino_t *c, float *magnitude) {
         magnitude[iBin] = fmaxf(magnitude[iBin] - backgroundOver * background, 0);
     }
     c->backgroundSet = true;
+}
+
+// The pitch class (0 = A) of the lowest note of each frame where no bass is
+// played, -1 where one is (see otherRootFactor). Each note counts with its
+// activation at its least within lowestNoteFrames frames either side.
+static void lowest_notes(const float *semitones, int nFrame, int *lowest) {
+    for (int iFrame = 0; iFrame < nFrame; iFrame++) {
+        float held[84];
+        float strongest = 0;
+        for (int iNote = 0; iNote < 84; iNote++) {
+            float least = INFINITY;
+            for (int jFrame = iFrame - lowestNoteFrames; jFrame <= iFrame + lowestNoteFrames; jFrame++) {
+                if (jFrame >= 0 && jFrame < nFrame) least = fminf(least, semitones[jFrame * 84 + iNote]);
+            }
+            held[iNote] = least;
+            strongest = fmaxf(strongest, least);
+        }
+        bool bass = false;
+        for (int iNote = 0; iNote < 84; iNote++) {
+            if (basswindow[iNote] >= 0.5 && held[iNote] >= playedBassShare * strongest) bass = true;
+        }
+        lowest[iFrame] = -1;
+        for (int iNote = 0; !bass && strongest > 0 && iNote < 84; iNote++) {
+            if (held[iNote] >= lowestNoteShare * strongest) {
+                lowest[iFrame] = iNote % 12;
+                break;
+            }
+        }
+    }
 }
 
 void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
@@ -541,9 +581,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
 
         // the bass chroma (0-11) stacked under the treble one (12-23), zeros to start
         float *chroma = vector_push(&c->rawChromas, NULL, 1);
-#ifdef CHORDINO_INSPECT
         float *semitones = vector_push(&c->semitones, NULL, 1);
-#endif
 
         if (some_b_greater_zero) {
             float x[84+1000];
@@ -575,9 +613,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
             for (int iNote = 0; iNote < nSignif; ++iNote) {
                 chroma[12 + signifIndex[iNote] % 12] += x[iNote] * treblewindow[signifIndex[iNote]];
                 chroma[signifIndex[iNote] % 12] += x[iNote] * basswindow[signifIndex[iNote]];
-#ifdef CHORDINO_INSPECT
                 semitones[signifIndex[iNote]] = x[iNote];
-#endif
             }
         }
 
@@ -619,6 +655,9 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     // Scores kept as scored, before the exponential and the normalisation below
     // discard how well each candidate actually fit (see the gate further down).
     double *rawChordValue = malloc(nChord * sizeof(double));
+    const int *sameNotesRoots = c->dictionary->sameNotesRoots;
+    int *lowest = malloc((nFrame > 0 ? nFrame : 1) * sizeof(int));
+    lowest_notes(c->semitones.data, nFrame, lowest);
     for (int iFrame = 0; iFrame < nFrame; iFrame++) {
         const double *smoothedChroma = smoothedChromas + iFrame * 24;
 
@@ -639,6 +678,9 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
             tempchordvalue = trebleMatch / trebleNorm[iChord]
                 + bassWeight * bassMatch / bassNorm[iChord];
             tempchordvalue *= noteCountPenalty[iChord];
+            if (lowest[iFrame] >= 0 && lowest[iFrame] != iChord % 12 && (sameNotesRoots[iChord] >> lowest[iFrame] & 1)) {
+                tempchordvalue *= otherRootFactor;
+            }
             if (iChord == nChord-1) tempchordvalue *= .7;
             if (tempchordvalue < 0) tempchordvalue = 0.0;
             if (tempchordvalue > 200.0) {
@@ -801,6 +843,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     free(scale);
     free(chordpath);
     free(rawChordValue);
+    free(lowest);
     free(smoothedChromas);
     free(chordogram);
     free(tunedSpec);

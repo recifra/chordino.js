@@ -67,6 +67,26 @@ describe('offline extraction', () => {
     });
   }
 
+  // The same notes on another root, with no bass: the lowest note names the chord
+  const sameNotes = [
+    ['Fsus2', ['F4', 'G4', 'C5']],
+    ['Csus4', ['C4', 'F4', 'G4']],
+    ['Bbsus4', ['Bb3', 'Eb4', 'F4']],
+    ['Ebsus2', ['Eb4', 'F4', 'Bb4']],
+    ['Bbsus2', ['Bb3', 'C4', 'F4']],
+    ['Fsus4', ['F4', 'Bb4', 'C5']],
+    ['Am7', ['A3', 'C4', 'E4', 'G4']],
+    ['C6', ['C4', 'E4', 'G4', 'A4']],
+  ];
+
+  for (const [chord, notes] of sameNotes) {
+    test(`names ${notes.join(' ')} ${chord} from its lowest note`, () => {
+      const result = detectChords(chordino, synthChord(notes, 3, SAMPLE_RATE), SAMPLE_RATE);
+
+      assert.deepEqual(labels(result), [chord, 'N']);
+    });
+  }
+
   test('follows a C Am F G progression', () => {
     const progression = ['C', 'Am', 'F', 'G'];
     const samples = concat(...progression.map((chord) => synthChord(voicings[chord], 2, SAMPLE_RATE)));

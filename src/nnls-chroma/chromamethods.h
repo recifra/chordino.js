@@ -52,6 +52,10 @@ typedef struct {
     // The MIDI notes of chord i are notes[noteStart[i]] up to notes[noteStart[i + 1]]
     int *noteStart;
     int *notes;
+    // For each chord, a bit for each root (0 = A) of the chords on other roots
+    // with the same notes: Fsus2 and Csus4, Am7 and C6, F#º and Am6, and the
+    // augmented triads a major third apart
+    int *sameNotesRoots;
 } chord_dictionary_t;
 
 // harteSyntax names chords as C:min and C/b3 rather than Cm and Cm/Eb

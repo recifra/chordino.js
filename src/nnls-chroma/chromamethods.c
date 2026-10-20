@@ -392,6 +392,17 @@ chord_dictionary_t *chord_dictionary_create(float boostN, bool harteSyntax) {
     }
 
 
+    dictionary->sameNotesRoots = calloc(size, sizeof(int));
+    for (int iChord = 0; iChord < iChordOut; iChord++) {
+        for (int jChord = 0; jChord < iChordOut; jChord++) {
+            bool same = jChord % 12 != iChord % 12;
+            for (int iBin = 12; same && iBin < 24; iBin++) {
+                same = (loadedChordDict[24 * iChord + iBin] > 0) == (loadedChordDict[24 * jChord + iBin] > 0);
+            }
+            if (same) dictionary->sameNotesRoots[iChord] |= 1 << (jChord % 12);
+        }
+    }
+
     // N type
     dictionary->noteStart[iChordOut] = nNotes;
     char *noChord = malloc(2);
@@ -425,5 +436,6 @@ void chord_dictionary_destroy(chord_dictionary_t *dictionary) {
     free(dictionary->templates);
     free(dictionary->noteStart);
     free(dictionary->notes);
+    free(dictionary->sameNotesRoots);
     free(dictionary);
 }
