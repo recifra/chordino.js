@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { before, beforeEach, describe, test } from 'node:test';
 
-import { concat, decodeMp3, loadWorker, paths, synthChord } from './helpers.js';
+import { concat, decodeMp3, loadWorker, paths, synthBand, synthChord } from './helpers.js';
 
 const SAMPLE_RATE = 44100;
 // Share of the progress src/js/chord-worker.ts gives to feeding the audio
-const FEED_SHARE = 0.25;
+const FEED_SHARE = 0.3;
 
 /**
  * Reproducible white noise. Chordino only reports N where something fails its
@@ -74,7 +74,25 @@ describe('offline worker', () => {
   test('silence is a single closing mark', async () => {
     const { last } = await run({ samples: new Float32Array(3 * SAMPLE_RATE), sampleRate: SAMPLE_RATE });
 
-    assert.deepEqual(last, { type: 'done', result: { timestamps: [['', 3]] } });
+    assert.deepEqual(last, { type: 'done', result: { timestamps: [['', 3]], beats: [], tempo: null } });
+  });
+
+  test('comes back with the beats, the tempo and the time signature', async () => {
+    const C = ['C3', 'C4', 'E4', 'G4'];
+    const G = ['G2', 'G3', 'B3', 'D4'];
+    const samples = synthBand({ bpm: 120, numerator: 4, chords: [C, G, C, G, C, G, C, G], sampleRate: SAMPLE_RATE });
+    const { last } = await run({ samples, sampleRate: SAMPLE_RATE });
+
+    assert.equal(last.type, 'done', JSON.stringify(last));
+    const { beats, tempo } = last.result;
+    assert.deepEqual(tempo, { bpm: 120, meter: [4, 4] });
+    // 8 bars of 2 s from 0.5 s, to the millisecond
+    const bars = beats.filter(([seconds, position]) => position === 1 && seconds > 0.4 && seconds < 16.4);
+    assert.equal(bars.length, 8, JSON.stringify(beats));
+    bars.forEach(([seconds], bar) => assert.ok(Math.abs(seconds - 0.5 - bar * 2) < 0.04, `bar ${bar} at ${seconds}`));
+    for (const [seconds] of beats) {
+      assert.equal(seconds, Math.round(seconds * 1000) / 1000);
+    }
   });
 
   test('a gap with no chord comes back as an empty label', async () => {

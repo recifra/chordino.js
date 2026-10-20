@@ -140,6 +140,66 @@ export function synthChord(notes, seconds, sampleRate) {
 }
 
 /**
+ * A band playing chords (lists of notes, bass first) at bpm, one a bar of
+ * numerator beats: a kick drum and the bass note on each downbeat, a snare on
+ * the backbeats (2 and 4 of 4, 3 of 3, the fourth eighth of 6), and a hi-hat
+ * and the rest of the chord, decaying like a piano, on every beat. bpm counts
+ * the beats of the numerator, the eighths in 6/8. Starts with lead seconds of
+ * a quiet room; the same every time.
+ */
+export function synthBand({ bpm, numerator, chords, sampleRate, lead = 0.5 }) {
+  const beat = 60 / bpm;
+  const bar = beat * numerator;
+  const seconds = lead + bar * chords.length + 1;
+  const out = roomTone(seconds, sampleRate);
+  let seed = 7;
+  const noise = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return (2 * seed) / 2147483648 - 1;
+  };
+  const add = (start, length, sample) => {
+    const from = Math.round(start * sampleRate);
+    const count = Math.min(Math.round(length * sampleRate), out.length - from);
+    for (let i = 0; i < count; i++) {
+      out[from + i] += sample(i / sampleRate);
+    }
+  };
+  const tone = (frequency, t) => {
+    let sum = 0;
+    for (let harmonic = 1; harmonic <= 6 && frequency * harmonic < sampleRate / 2; harmonic++) {
+      sum += Math.sin(2 * Math.PI * frequency * harmonic * t) / harmonic;
+    }
+    return sum;
+  };
+  const kick = (t) => 0.5 * Math.sin(2 * Math.PI * (50 * t + 400 * t * Math.exp(-t * 20) / 20)) * Math.exp(-t * 12);
+  const snare = (t) => 0.25 * noise() * Math.exp(-t * 25);
+  let previous = 0;
+  const hat = (t) => {
+    const value = noise();
+    const high = value - previous;
+    previous = value;
+    return 0.06 * high * Math.exp(-t * 80);
+  };
+  const backbeats = numerator === 6 ? [3] : numerator === 3 ? [2] : [1, 3];
+  chords.forEach((notes, index) => {
+    const start = lead + index * bar;
+    const root = 440 * 2 ** ((midi(notes[0]) - 69) / 12);
+    add(start, 0.25, kick);
+    add(start, bar, (t) => 0.12 * tone(root, t) * Math.exp(-t * 2));
+    for (let i = 0; i < numerator; i++) {
+      const at = start + i * beat;
+      add(at, 0.05, hat);
+      if (backbeats.includes(i)) add(at, 0.2, snare);
+      for (const note of notes.slice(1)) {
+        const frequency = 440 * 2 ** ((midi(note) - 69) / 12);
+        add(at, beat, (t) => 0.04 * tone(frequency, t) * Math.exp(-t * 4));
+      }
+    }
+  });
+  return out;
+}
+
+/**
  * A quiet room, white noise at -60 dB, the same every time. Live sessions take
  * the steady background off and start it from the first frame, so a test that
  * plays a chord from the first sample has it taken for the background.

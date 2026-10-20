@@ -36,7 +36,7 @@ Everything lands in `build/`:
 
 - `chordino.mjs` + `chordino.wasm`: the production module, an ES module whose
   default export `createChordino()` resolves to the module with
-  `initializePlugin`, `processBuffer`, `getResult`, `resetProcess`,
+  `initializePlugin`, `processBuffer`, `getResult`, `getBeats`, `resetProcess`,
   `releasePlugin`, the tuner's `createPitch`, `detectPitch`, `pitchRms` and
   `releasePitch`, `_malloc`, `_free` and `HEAPF32`. `getResult` does nearly
   all of the work in one call, so `setProgressCallback(fn)` has it call `fn`
@@ -49,6 +49,19 @@ Everything lands in `build/`:
   `initializePlugin(sampleRate, blockSize, true)` gets each frame out as soon
   as its audio is in, half a block (186 ms at 44.1 kHz) sooner, at the cost of
   the first few frames, so the chords start that much after 0.
+  Offline (not realtime), the instance also hands every sample to the
+  `rhythm_t` of `src/rhythm.c`, and `getResult` finds the beats along with
+  the chords, which `getBeats(instance)` then reads: `{ bpm, numerator,
+  denominator, beats: [{ time, position }] }`, or `null`. `src/onset.c` makes
+  the onset strength they come from, the spectral flux of madmom's SuperFlux
+  at 100 frames a second; the tempo is the period it repeats at most, weighed
+  towards 120 BPM, and the beats are Ellis's dynamic programming over it.
+  The bars are where Chordino's chords change and the bass comes in: two
+  beats or four a bar, or three, or six eighths of 6/8, whichever stands out
+  most, with a Viterbi pass that lets a bar start out of turn where the
+  accents move for good. Beats that split in three, a third and two thirds
+  into them more than halfway, make the meter compound, 6/8 or 12/8, with the
+  thirds as its beats. None of it changes a bit of the chords.
   `createPitch(sampleRate, size)` is the `pitch_t` of `src/pitch.c`: YIN over
   windows of `size` samples (even), with the difference function from a
   cross-correlation through KISS FFT, as `pitch_create`, `pitch_detect`,
@@ -56,7 +69,8 @@ Everything lands in `build/`:
   needs nothing of emscripten, so a native build can compile it as is.
 - `chord-worker.mjs` (from `src/js/chord-worker.ts`): module worker that
   detects the chords of a whole recording, posting its progress and then
-  `{"timestamps": [[chord, seconds], ..., ["", end]]}`.
+  `{"timestamps": [[chord, seconds], ..., ["", end]], "beats": [[seconds,
+  position], ...], "tempo": {"bpm": 76, "meter": [4, 4]}}`.
   `examples/extract/index.html` drives it, including from a CDN on another
   origin (workers must start from the page's origin).
 - `chord-live-worker.mjs` (from `src/js/chord-live-worker.ts`): module worker
@@ -78,7 +92,7 @@ Everything lands in `build/`:
   below. Not for apps, and not in the package.
 
 An app ships the six files at the top of `build/` together, in one directory.
-The three workers share the one `.wasm` (5 KB + 73 KB; the old single-file
+The three workers share the one `.wasm` (5 KB + 85 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
 2, 3 and 1 KB of their own.
 

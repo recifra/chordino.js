@@ -15,6 +15,16 @@ EM_JS(void, pushChord, (const char *label, double time), {
     chordList.push({ 'chord': UTF8ToString(label), 'time': time });
 });
 
+// Adds a beat to the list chordextract.js hands back from getBeats
+EM_JS(void, pushBeat, (double time, int position), {
+    beatList.push({ 'time': time, 'position': position });
+});
+
+// The tempo and time signature getBeats hands back with its beats
+EM_JS(void, setMeter, (double bpm, int numerator, int denominator), {
+    beatMeter = { 'bpm': bpm, 'numerator': numerator, 'denominator': denominator };
+});
+
 // Calls the function setProgressCallback was given
 EM_JS(void, reportProgress, (double done), {
     progressCallback(done);
@@ -98,6 +108,18 @@ void getResult(session_t *session) {
 EMSCRIPTEN_KEEPALIVE
 void getPartialResult(session_t *session) {
     pushChords(session_decode(session));
+}
+
+// The beats of the audio getResult read, with its tempo and time signature:
+// none before getResult, for a realtime instance, or where no beat was found
+EMSCRIPTEN_KEEPALIVE
+void getBeats(session_t *session) {
+    const rhythm_result_t *result = session->beats;
+    if (!result || result->beatCount == 0) return;
+    setMeter(result->bpm, result->numerator, result->denominator);
+    for (int i = 0; i < result->beatCount; ++i) {
+        pushBeat(result->beats[i].time, result->beats[i].position);
+    }
 }
 
 // Forgets the frames from before the given time (in the clock processBuffer was

@@ -8,6 +8,23 @@ export interface Chord {
   time: number;
 }
 
+/** One beat: when it is, in seconds, and where it falls in its bar, from 1 for the downbeat */
+export interface Beat {
+  time: number;
+  position: number;
+}
+
+/** The beats of a recording, with its tempo and time signature */
+export interface Beats {
+  /** Beats a minute, of the note the time signature counts: the eighth in 6/8 */
+  bpm: number;
+  /** Beats a bar */
+  numerator: number;
+  /** The note of a beat: 4 for the quarter, 8 for the eighth */
+  denominator: number;
+  beats: Beat[];
+}
+
 export interface ChordinoModule {
   /**
    * A plugin instance, fed blockSize samples at a time. realtime gets each frame
@@ -19,6 +36,11 @@ export interface ChordinoModule {
   processBuffer(instance: number, buffer: number, milliseconds: number): void;
   /** Chords of everything fed, padding what is still buffered with zeros: for the end of the audio */
   getResult(instance: number): Chord[];
+  /**
+   * Beats of the audio getResult read, found alongside its chords. null before
+   * getResult, for a realtime instance, and when there is no beat to find.
+   */
+  getBeats(instance: number): Beats | null;
   /** Chords of the frames so far, for a caller that goes on feeding */
   getPartialResult(instance: number): Chord[];
   /** Drops the frames before milliseconds, so getPartialResult decodes a bounded window */

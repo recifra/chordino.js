@@ -5,7 +5,8 @@ Matthias Mauch's NNLS Chroma Vamp plugins, ported to C and compiled to
 WebAssembly, with two ways to run it:
 
 - **Whole recordings**, in a Web Worker: hand it the samples, get back the
-  chords with their start times, and progress while it works.
+  chords with their start times, the beats with the tempo and the time
+  signature, and progress while it works.
 - **Live input**, in an AudioWorklet that hands the microphone to a Web
   Worker: get each chord change as it happens.
 
@@ -26,7 +27,7 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 73 KB (38 KB gzipped) | Chordino and the tuner's YIN, with KISS FFT |
+| `chordino.wasm` | 85 KB (43 KB gzipped) | Chordino, the beat tracker and the tuner's YIN, with KISS FFT |
 | `chordino.mjs` | 5 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |
@@ -65,6 +66,7 @@ worker.onmessage = ({ data }) => {
     console.log(`${Math.round(data.value * 100)}%`);
   } else if (data.type === 'done') {
     console.log(data.result.timestamps); // [['G', 0], ['C', 1.486], ['F', 2.833], ['', 6.002]]
+    console.log(data.result.tempo); // { bpm: 76, meter: [4, 4] }
   } else if (data.type === 'error') {
     console.error(data.message);
   }
@@ -79,7 +81,12 @@ The worker posts, in order:
 - `{ type: 'done', result }`, where `result.timestamps` is a list of
   `[chord, seconds]` in time order. Chords use Chordino's labels (`C`, `Am`,
   `G7`, `C7M`, `Bº`, `Dsus4`, `C/E`, ...); `''` means no chord, and the list
-  always ends with `['', duration]`;
+  always ends with `['', duration]`. `result.beats` is a list of
+  `[seconds, position]`, every beat with where it falls in its bar, from 1
+  for the downbeat, and `result.tempo` is `{ bpm, meter: [numerator,
+  denominator] }`, or `null` where there are no beats (silence, speech). The
+  BPM counts the note of the denominator, as the beats do: the eighths in 6/8
+  (two groups of three a bar) and 12/8, the quarters in 4/4, 3/4 and 2/4;
 - `{ type: 'error', message }` in place of `done` when the analysis fails.
 
 A worker can be posted any number of recordings, one after another.
@@ -240,7 +247,7 @@ const Module = await createChordino(); // loads chordino.wasm from next to chord
 const instance = Module.initializePlugin(sampleRate, 4096);
 ```
 
-The module has `initializePlugin`, `processBuffer`, `getResult`,
+The module has `initializePlugin`, `processBuffer`, `getResult`, `getBeats`,
 `getPartialResult`, `forgetBefore` and a few more, and the tuner's
 `createPitch`, `detectPitch`, `pitchRms` and `releasePitch`; [BUILD.md](BUILD.md)
 describes them and the package carries their types.

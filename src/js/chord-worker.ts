@@ -7,25 +7,35 @@
 // (workers have to come from the page's origin; see examples/extract/index.html
 // for scripts on a CDN) and gets back, in order:
 //   { type: 'progress', value }  value rising from 0 to 1, once per whole percent
-//   { type: 'done', result }     the chord JSON examples/player loads as expected:
-//                                { timestamps: [[chord, seconds], ..., ['', end]] }
+//   { type: 'done', result }     the chord JSON examples/player loads as expected,
+//                                with the beats and the tempo:
+//                                { timestamps: [[chord, seconds], ..., ['', end]],
+//                                  beats: [[seconds, position], ...],
+//                                  tempo: { bpm, meter: [numerator, denominator] } }
 //   { type: 'error', message }   instead of done when the analysis failed
 
-import createChordino, { type Chord, type ChordinoModule } from './chordino.mjs';
+import createChordino, { type Beats, type Chord, type ChordinoModule } from './chordino.mjs';
 
 interface ChordTimestamps {
   timestamps: [chord: string, seconds: number][];
 }
 
+interface BeatTimes {
+  /** Every beat, with where it falls in its bar: 1 for the downbeat */
+  beats: [seconds: number, position: number][];
+  /** BPM of the note the meter counts (the eighth in 6/8); null with no beats */
+  tempo: { bpm: number; meter: [numerator: number, denominator: number] } | null;
+}
+
 type WorkerMessage =
   | { type: 'progress'; value: number }
-  | { type: 'done'; result: ChordTimestamps }
+  | { type: 'done'; result: ChordTimestamps & BeatTimes }
   | { type: 'error'; message: string };
 
 const BUFFER_SIZE = 4096;
 // Share of the time spent feeding the audio in; getResult() takes the rest and
 // reports its own progress (measured on a 5 minute song).
-const FEED_SHARE = 0.25;
+const FEED_SHARE = 0.3;
 
 let chordino: Promise<ChordinoModule> | null = null;
 let reportedPercent = -1;
@@ -47,7 +57,7 @@ function post(message: WorkerMessage) {
   postMessage(message);
 }
 
-function detect(Module: ChordinoModule, samples: unknown, sampleRate: unknown): ChordTimestamps {
+function detect(Module: ChordinoModule, samples: unknown, sampleRate: unknown): ChordTimestamps & BeatTimes {
   if (!(samples instanceof Float32Array) || typeof sampleRate !== 'number' || !(sampleRate > 0)) {
     throw new Error('expected { samples: Float32Array, sampleRate }');
   }
@@ -65,10 +75,12 @@ function detect(Module: ChordinoModule, samples: unknown, sampleRate: unknown): 
       Module.processBuffer(instance, pBuffer, Math.trunc((offset / sampleRate) * 1000));
       progress(FEED_SHARE * Math.min((offset + BUFFER_SIZE) / samples.length, 1));
     }
-    // Chordino does the NNLS, chord matching and Viterbi decoding all in here
+    // Chordino does the NNLS, chord matching and Viterbi decoding all in here,
+    // and then the beats are found with the chords
     const chords = Module.getResult(instance);
+    const beats = Module.getBeats(instance);
     progress(1);
-    return toTimestamps(chords, samples.length / sampleRate);
+    return { ...toTimestamps(chords, samples.length / sampleRate), ...toBeatTimes(beats) };
   } finally {
     Module.setProgressCallback(null);
     Module.releasePlugin(instance);
@@ -84,6 +96,8 @@ function progress(value: number) {
   }
 }
 
+const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
 /**
  * getResult()'s [{ chord, time }] as { timestamps: [[chord, seconds], ...] }, to
  * the millisecond: N becomes '' (no chord) and a leading one is dropped, and the N
@@ -91,7 +105,6 @@ function progress(value: number) {
  * unless the song already ends in no chord.
  */
 function toTimestamps(chords: Chord[], duration: number): ChordTimestamps {
-  const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
   const timestamps: ChordTimestamps['timestamps'] = [];
   for (const { chord, time } of chords.slice(0, -1)) {
     const label = chord === 'N' ? '' : chord;
@@ -103,4 +116,15 @@ function toTimestamps(chords: Chord[], duration: number): ChordTimestamps {
     timestamps.push(['', round(duration)]);
   }
   return { timestamps };
+}
+
+/** getBeats()'s beats as [[seconds, position], ...], to the millisecond, and the whole BPM */
+function toBeatTimes(beats: Beats | null): BeatTimes {
+  if (!beats) {
+    return { beats: [], tempo: null };
+  }
+  return {
+    beats: beats.beats.map(({ time, position }) => [round(time), position]),
+    tempo: { bpm: Math.round(beats.bpm), meter: [beats.numerator, beats.denominator] },
+  };
 }

@@ -20,6 +20,7 @@ session_t *session_create(float sampleRate, int inputBlockSize, bool realtime) {
     session->pending = malloc((blockSize + inputBlockSize) * sizeof(float));
     session->shifted = malloc((blockSize + blockSize / 2) * sizeof(float));
     session->spectrum = spectrum_create(blockSize);
+    session->rhythm = realtime ? NULL : rhythm_create(sampleRate);
     session_reset(session);
     return session;
 }
@@ -29,6 +30,7 @@ void session_destroy(session_t *session) {
     free(session->pending);
     free(session->shifted);
     spectrum_destroy(session->spectrum);
+    if (session->rhythm) rhythm_destroy(session->rhythm);
     free(session);
 }
 
@@ -37,7 +39,9 @@ void session_reset(session_t *session) {
     session->frame = 0;
     session->fed = false;
     session->analysed = 0;
+    session->beats = NULL;
     chordino_reset(session->chordino);
+    if (session->rhythm) rhythm_reset(session->rhythm);
 }
 
 // Frames are timed on the sample rate rounded to a whole number
@@ -90,6 +94,7 @@ void session_process(session_t *session, const float *samples, realtime_t timest
         session->frame = realtime_to_frame(timestamp, frame_rate(session));
         session->fed = true;
     }
+    if (session->rhythm) rhythm_process(session->rhythm, samples, session->inputBlockSize, timestamp);
     // pending never holds a whole block between calls, so this always fits
     memcpy(session->pending + session->pendingCount, samples, session->inputBlockSize * sizeof(float));
     session->pendingCount += session->inputBlockSize;
@@ -107,7 +112,9 @@ const chordino_result_t *session_finish(session_t *session) {
         session->pendingCount = session->blockSize;
         step(session);
     }
-    return session_decode(session);
+    const chordino_result_t *chords = session_decode(session);
+    if (session->rhythm) session->beats = rhythm_decode(session->rhythm, chords);
+    return chords;
 }
 
 const chordino_result_t *session_decode(session_t *session) {
