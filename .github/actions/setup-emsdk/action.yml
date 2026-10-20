@@ -1,0 +1,30 @@
+name: Set up emsdk
+description: Installs and activates the emsdk src/build.sh compiles with, kept in the cache between runs
+inputs:
+  version:
+    description: emsdk version
+    default: 6.0.3
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/emsdk
+        key: emsdk-${{ inputs.version }}-${{ runner.os }}
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+        "$RUNNER_TEMP/emsdk/emsdk" install "${{ inputs.version }}"
+    # emsdk_env.sh only changes the shell it runs in; the next steps get its
+    # PATH and variables through GITHUB_PATH and GITHUB_ENV
+    - shell: bash
+      run: |
+        "$RUNNER_TEMP/emsdk/emsdk" activate "${{ inputs.version }}"
+        source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+        echo "$EMSDK/upstream/emscripten" >> "$GITHUB_PATH"
+        for name in EMSDK EMSDK_NODE EMSDK_PYTHON; do
+          if [ -n "${!name}" ]; then echo "$name=${!name}" >> "$GITHUB_ENV"; fi
+        done
+        emcc --version | head -1

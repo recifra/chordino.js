@@ -1,0 +1,83 @@
+name: CI
+
+# Lint, typecheck and test every push and pull request; a tag vX.Y.Z (the
+# version in package.json) then publishes the package to npm
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: ./.github/actions/setup-emsdk
+      # The C with every warning an error, then the wasm and the workers the
+      # tests load from build/
+      - run: npm run lint:c
+      - run: npm run build
+      - run: npm test
+
+  publish:
+    needs: [lint, typecheck, test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # npm provenance, and trusted publishing where npm has it set up
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: The tag is the version in package.json
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but package.json is at $version"
+            exit 1
+          fi
+      - run: npm ci
+      - uses: ./.github/actions/setup-emsdk
+      # prepublishOnly builds and tests again, so what goes out is what passed
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

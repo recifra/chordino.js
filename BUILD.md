@@ -149,6 +149,38 @@ annotations have them) or chord changes, while tuning the detectors.
 node test/eval-beats.js training/training.mp3 training/training.json
 ```
 
+## Lint and typecheck
+
+```sh
+npm run lint        # Biome over the JS and TS, biome.json
+npm run lint:c      # the C through emcc with -Wall -Wextra -Werror
+npm run typecheck   # tsc -b src/js, which npm run build:js runs first too
+```
+
+`biome.json` keeps the recommended rules but those against this code's own
+ways: assigning in an expression (`const current = worker = new Worker(...)`),
+a `forEach` arrow that returns, `onmessage =` in a worker, and the quoted
+names of `src/chordextract.js` and `src/inspect.js`, which Closure leaves as
+they are.
+
+## CI
+`.github/workflows/ci.yml` runs the lint, the typecheck and the tests (after
+`lint:c` and a full build, with the emsdk of
+`.github/actions/setup-emsdk`, 6.0.3) on every push to `main` and every pull
+request. A tag `vX.Y.Z` runs them too and then publishes the package to npm,
+with provenance, once the tag is the version in `package.json`:
+
+Bump the version in `package.json`, `package-lock.json` and the CDN URL of
+`README.md`, commit, then tag that commit and push both:
+
+```sh
+git tag v0.5.1 && git push origin main v0.5.1
+```
+
+Publishing needs an npm automation token in the repository's `NPM_TOKEN`
+secret, or chordino.js set up on npmjs.com for trusted publishing from this
+repository's `ci.yml`.
+
 ## Publishing
 The npm package is `chordino.js`. Its contents are the `files` listed in
 `package.json` (the five files an app ships, plus `chordino.d.mts` and the KISS
