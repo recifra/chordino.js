@@ -45,14 +45,14 @@ const PANELS = [
     id: 'chroma',
     field: 'chroma',
     title: 'Chroma',
-    note: 'NNLS chroma, treble on top of bass, each half normalized per frame',
+    note: 'NNLS chroma, treble on top of bass, normalized per frame to the strongest of both',
     rowHeight: 11,
   },
   {
     id: 'smoothedchroma',
     field: 'smoothed',
     title: 'Smoothed chroma',
-    note: 'EMA the chord matcher actually scores, each half normalized per frame; it runs both ways, so right of the read line it still changes',
+    note: 'EMA the chord matcher actually scores, normalized per frame to the strongest of both halves; it runs both ways, so right of the read line it still changes',
     rowHeight: 11,
   },
   {
@@ -445,7 +445,10 @@ function layout(panel, frames) {
     for (let bin = 23; bin >= 0; bin--) {
       rows.push({ bin, label: names.chromaNames[bin] });
     }
-    return { rows, groups: new Uint8Array(24).map((_, bin) => (bin < 12 ? 0 : 1)), binCount: 24, separators: [12] };
+    // Unlike the player, both halves share one peak: the matcher weighs the bass
+    // as strong as it is against the treble, while the bass half on its own, from
+    // a microphone that barely hears a bass, stretched its stray notes to full color
+    return { rows, groups: new Uint8Array(24), binCount: 24, separators: [12] };
   }
   if (panel.id === 'semitonespectrum') {
     const rows = [];
