@@ -289,7 +289,8 @@ a hook for each.
   JSON, the way an app would.
 - `player/`: plays a recording and shows, frame by frame, the chroma, chord
   salience and semitone spectrum Chordino works from, next to the chords it
-  finds.
+  finds, and the tempo, time signature and bars, with a click on every beat
+  to hear them against the music.
 - `realtime/`: the same from the microphone, through the production worklet
   and worker, with the input and sustained levels against the silence gate,
   and the audio heard to download as a WAV, to analyze it again elsewhere.

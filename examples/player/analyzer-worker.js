@@ -5,7 +5,7 @@ importScripts('./chordino-inspect.js');
 const BUFFER_SIZE = 4096;
 const OUTPUTS = ['chroma', 'smoothedchroma', 'chordsalience', 'semitonespectrum'];
 // Share of the time spent feeding the audio in, as in src/js/chord-worker.ts
-const FEED_SHARE = 0.25;
+const FEED_SHARE = 0.3;
 
 onmessage = ({ data: { samples, sampleRate } }) => {
   const pBuffer = Module._malloc(BUFFER_SIZE * Float32Array.BYTES_PER_ELEMENT);
@@ -27,10 +27,12 @@ onmessage = ({ data: { samples, sampleRate } }) => {
         postMessage({ type: 'progress', value: FEED_SHARE * (i / blocks) });
       }
     }
-    // Chordino does the NNLS, chord matching and Viterbi decoding all in here
+    // Chordino does the NNLS, chord matching and Viterbi decoding all in here,
+    // and the session finds the beats along with them
     const analysis = Module.getAnalysis(instance);
+    const beats = Module.getBeats(instance);
     const transfer = [analysis.times.buffer, analysis.gate.buffer, ...OUTPUTS.map((output) => analysis[output].values.buffer)];
-    postMessage({ type: 'done', analysis }, transfer);
+    postMessage({ type: 'done', analysis, beats }, transfer);
   } catch (err) {
     postMessage({ type: 'error', message: String(err) });
   } finally {

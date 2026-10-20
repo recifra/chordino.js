@@ -74,6 +74,8 @@ audio { width: 100%; max-width: 560px; }
 #expected-file { color: var(--muted); }
 #clear-expected { border: 0; background: none; color: inherit; font-size: 16px; cursor: pointer; }
 #time { color: var(--muted); font-variant-numeric: tabular-nums; }
+#meter { font-size: 24px; font-weight: 700; }
+#bar { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 #candidates {
   display: grid;
   grid-template-columns: auto 120px auto;

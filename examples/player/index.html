@@ -26,6 +26,7 @@
   <div class="controls">
     <audio id="audio" controls></audio>
     <fieldset id="toggles"></fieldset>
+    <label><input type="checkbox" id="click"> Click on the beats</label>
     <label>Window
       <select id="window">
         <option value="5">5 s</option>
@@ -44,6 +45,11 @@
       <div class="caption">expected</div>
       <div id="expected-chord">–</div>
       <div id="score"></div>
+    </div>
+    <div id="rhythm" hidden>
+      <div class="caption">tempo</div>
+      <div id="meter">–</div>
+      <div id="bar"></div>
     </div>
     <div id="time"></div>
     <ol id="candidates"></ol>

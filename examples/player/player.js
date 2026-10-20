@@ -2,7 +2,9 @@
 // play it: every panel scrolls under a fixed playhead driven by audio.currentTime,
 // so pause and seek need no extra handling. A chord JSON (same shape as
 // training/training.json) dropped with it, or later, is shown as the
-// expected chords and graded against the detected ones.
+// expected chords and graded against the detected ones. The beats the
+// session finds come along: the tempo and time signature, a tick per beat
+// under the chords, bar lines over the panels, and a click on each beat.
 
 import { chordKey, compare, grade, parseExpected, segmentAt } from './chords.js';
 import { buildExport } from './export.js';
@@ -17,6 +19,8 @@ const BAND = 24;
 const STRIP = 5;
 const GATE_HEIGHT = 4;
 const TICK_BAND = 14;
+const BEAT_BAND = 16;
+const CLICK_SECONDS = 0.03;
 // A chord the Viterbi path never takes still gets a salience row when it wins
 // at least this many frames on its own.
 const MIN_FRAME_WINS = 5;
@@ -65,6 +69,10 @@ const scoreText = $('score');
 const expectedFile = $('expected-file');
 const exportButton = $('export');
 const exportStep = $('export-step');
+const rhythmBox = $('rhythm');
+const meterText = $('meter');
+const barText = $('bar');
+const clickBox = $('click');
 
 const LUT = buildLut([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]]);
 
@@ -77,10 +85,13 @@ let theme = readTheme();
 let windowSec = Number(windowSelect.value);
 let lastKey = '';
 let lastFrame = -1;
+let lastTime = 0;
+let audioContext = null;
 
 const hidden = new Set(loadHidden());
 const lane = createLane();
 const panels = PANELS.map(createPanel);
+addToggle('barlines', 'Bar lines');
 
 // --- loading -----------------------------------------------------------------
 
@@ -174,12 +185,15 @@ async function load(file) {
         setStatus(`${file.name} has no audio to analyze`);
         return;
       }
-      view = buildView(data.analysis);
+      view = buildView(data.analysis, data.beats);
       refreshExpected();
       exportButton.disabled = false;
+      rhythmBox.hidden = !view.tempo;
+      meterText.textContent = view.tempo ? `${Math.round(view.tempo.bpm)} BPM · ${view.tempo.meter.join('/')}` : '–';
       const seconds = ((performance.now() - started) / 1000).toFixed(1);
+      const rhythm = view.tempo ? `${Math.round(view.tempo.bpm)} BPM in ${view.tempo.meter.join('/')}` : 'no beats';
       setStatus(`${file.name} · ${formatTime(view.duration)} · ${view.frames} frames · ` +
-        `${view.segments.length - 1} chords · analyzed in ${seconds} s`);
+        `${view.segments.length - 1} chords · ${rhythm} · analyzed in ${seconds} s`);
     } else if (data.type === 'error') {
       current.terminate();
       worker = null;
@@ -237,7 +251,7 @@ function setStatus(text, value) {
 
 // --- analysis -> drawable view ---------------------------------------------------
 
-function buildView(analysis) {
+function buildView(analysis, beats) {
   const { times, chords } = analysis;
   const frames = times.length;
   const frameRate = frames > 1 ? (frames - 1) / (times[frames - 1] - times[0]) : SAMPLE_RATE / 2048;
@@ -273,7 +287,20 @@ function buildView(analysis) {
     templateCount: analysis.chordsalience.binCount,
     gate: analysis.gate,
     comparison: null,
+    tempo: beats && { bpm: beats.bpm, meter: [beats.numerator, beats.denominator] },
+    beats: numberBars(beats?.beats ?? []),
   };
+}
+
+/** The beats with the number of their bar, from 1; those before the first downbeat are bar 0. */
+function numberBars(beats) {
+  let bar = 0;
+  return beats.map((beat) => {
+    if (beat.position === 1) {
+      bar++;
+    }
+    return { ...beat, bar };
+  });
 }
 
 /** Grades the detected chords against the expected ones and relays out the salience rows. */
@@ -447,25 +474,30 @@ function createPanel(config) {
   section.append(title, canvas);
   $('panels').append(section);
   addSeek(canvas);
+  addToggle(config.id, config.title, (checked) => {
+    section.hidden = !checked;
+  });
+  return { ...config, section, canvas, rows: [], separators: [], tiles: [] };
+}
 
+/** A checkbox in #toggles that shows what id names unless it is in hidden, kept across visits. */
+function addToggle(id, title, onChange) {
   const toggle = document.createElement('label');
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
-  checkbox.checked = !section.hidden;
+  checkbox.checked = !hidden.has(id);
   checkbox.addEventListener('change', () => {
-    section.hidden = !checkbox.checked;
     if (checkbox.checked) {
-      hidden.delete(config.id);
+      hidden.delete(id);
     } else {
-      hidden.add(config.id);
+      hidden.add(id);
     }
     saveHidden();
+    onChange?.(checkbox.checked);
     lastKey = '';
   });
-  toggle.append(checkbox, ` ${config.title}`);
+  toggle.append(checkbox, ` ${title}`);
   $('toggles').append(toggle);
-
-  return { ...config, section, canvas, rows: [], separators: [], tiles: [] };
 }
 
 function addSeek(canvas) {
@@ -480,6 +512,14 @@ function addSeek(canvas) {
     audio.currentTime = Math.min(Math.max(time, 0), view.duration);
   });
 }
+
+// The click plays through an AudioContext, which has to start from a gesture
+clickBox.addEventListener('change', () => {
+  if (clickBox.checked) {
+    audioContext ??= new AudioContext();
+    audioContext.resume();
+  }
+});
 
 windowSelect.addEventListener('change', () => {
   windowSec = Number(windowSelect.value);
@@ -546,6 +586,7 @@ requestAnimationFrame(function tick() {
     return;
   }
   const time = audio.currentTime;
+  clickBeats(time);
   const key = `${time}|${windowSec}|${document.documentElement.clientWidth}|${devicePixelRatio}`;
   if (key === lastKey) {
     return;
@@ -585,7 +626,8 @@ function timeScale(area, time) {
 
 function drawLane(time) {
   const { comparison } = view;
-  const bands = comparison ? 2 * BAND + STRIP : BAND;
+  const chordBands = comparison ? 2 * BAND + STRIP : BAND;
+  const bands = chordBands + (view.beats.length ? BEAT_BAND : 0);
   const area = fit(lane.canvas, bands + TICK_BAND);
   const { context, width, height } = area;
   const { pxPerSec, start, x } = timeScale(area, time);
@@ -607,6 +649,7 @@ function drawLane(time) {
     }
     drawSegments(context, expected.segments, BAND + STRIP, x, time, width);
   }
+  drawBeats(context, chordBands, x, time, width);
 
   context.font = '10px system-ui, sans-serif';
   context.textBaseline = 'middle';
@@ -627,8 +670,56 @@ function drawLane(time) {
   if (comparison) {
     context.fillText('expected', GUTTER - 6, BAND + STRIP + BAND / 2);
   }
+  if (view.beats.length) {
+    context.fillText('bars', GUTTER - 6, chordBands + BEAT_BAND / 2);
+  }
   context.textAlign = 'left';
   drawPlayhead(context, area);
+}
+
+/**
+ * A tick per beat in the band under the chords, at top: the downbeats full
+ * height, numbered with their bar and drawn across the chords too, the first
+ * of each three eighths of 6/8 or 12/8 half way, and the beat sounding in the
+ * accent colour.
+ */
+function drawBeats(context, top, x, time, width) {
+  const { beats, tempo } = view;
+  const compound = tempo?.meter[1] === 8;
+  const current = beats.findLast((beat) => beat.time <= time);
+  context.font = '10px system-ui, sans-serif';
+  context.textBaseline = 'middle';
+  for (const beat of beats) {
+    const at = x(beat.time);
+    if (at < GUTTER - 40 || at > width) {
+      continue;
+    }
+    const color = beat === current ? theme.accent : beat.position === 1 ? theme.fg : theme.muted;
+    context.fillStyle = color;
+    if (beat.position === 1) {
+      context.globalAlpha = 0.5;
+      context.fillRect(at, 0, 1, top);
+      context.globalAlpha = 1;
+      context.fillRect(at - 0.5, top + 1, 2, BEAT_BAND - 2);
+      context.fillText(String(beat.bar), at + 4, top + BEAT_BAND / 2);
+    } else {
+      const tall = compound && (beat.position - 1) % 3 === 0 ? BEAT_BAND / 2 : BEAT_BAND / 3;
+      context.fillRect(at - 0.5, top + BEAT_BAND - 1 - tall, 1.5, tall);
+    }
+  }
+}
+
+/** A faint line down the panel at every downbeat. */
+function drawBarLines(context, x, height, width) {
+  context.fillStyle = theme.fg;
+  context.globalAlpha = 0.35;
+  for (const beat of view.beats) {
+    const at = x(beat.time);
+    if (beat.position === 1 && at >= GUTTER && at <= width) {
+      context.fillRect(at, 0, 1, height);
+    }
+  }
+  context.globalAlpha = 1;
 }
 
 /** Marks frames the confidence gate rejected along the top of the detected band. */
@@ -670,8 +761,8 @@ function drawSegments(context, segments, top, x, time, width) {
 
 function drawPanel(panel, time) {
   const area = fit(panel.canvas, panel.rows.length * panel.rowHeight);
-  const { context, height } = area;
-  const { pxPerSec, start } = timeScale(area, time);
+  const { context, height, width } = area;
+  const { pxPerSec, start, x } = timeScale(area, time);
 
   context.fillStyle = theme.empty;
   context.fillRect(GUTTER, 0, area.plotWidth, height);
@@ -695,6 +786,9 @@ function drawPanel(panel, time) {
   for (const row of panel.separators) {
     context.fillRect(GUTTER, row * panel.rowHeight - 1, area.plotWidth, 2);
   }
+  if (!hidden.has('barlines')) {
+    drawBarLines(context, x, height, width);
+  }
 
   context.textAlign = 'right';
   context.textBaseline = 'middle';
@@ -717,6 +811,30 @@ function drawPanel(panel, time) {
   drawPlayhead(context, area);
 }
 
+/** Clicks each beat the playhead went past since the frame before, higher on the downbeat; a seek clicks nothing. */
+function clickBeats(time) {
+  const from = lastTime;
+  lastTime = time;
+  if (!clickBox.checked || !audioContext || audio.paused || !(time > from) || time - from > 0.25) {
+    return;
+  }
+  const beat = view.beats.find((item) => item.time > from && item.time <= time);
+  if (!beat) {
+    return;
+  }
+  const compound = view.tempo.meter[1] === 8;
+  const frequency = beat.position === 1 ? 1760 : compound && (beat.position - 1) % 3 === 0 ? 1320 : 1100;
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const now = audioContext.currentTime;
+  oscillator.frequency.value = frequency;
+  gain.gain.setValueAtTime(0.3, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + CLICK_SECONDS);
+  oscillator.connect(gain).connect(audioContext.destination);
+  oscillator.start(now);
+  oscillator.stop(now + CLICK_SECONDS);
+}
+
 function drawPlayhead(context, area) {
   context.fillStyle = theme.playhead;
   context.fillRect(GUTTER + area.plotWidth / 2 - 0.75, 0, 1.5, area.height);
@@ -736,6 +854,8 @@ function expectedLabelAt(time) {
 
 function updateNow(time) {
   timeText.textContent = `${formatTime(time)} / ${formatTime(view.duration)}`;
+  const beat = view.beats.findLast((item) => item.time <= time);
+  barText.textContent = beat ? `bar ${beat.bar} · beat ${beat.position}` : '';
   const segment = view.segments.findLast((item) => item.start <= time);
   chordText.textContent = segment ? segment.chord : '–';
   if (expected) {
@@ -772,6 +892,8 @@ function updateNow(time) {
 }
 
 function clearNow() {
+  rhythmBox.hidden = true;
+  barText.textContent = '';
   chordText.textContent = '–';
   expectedChord.textContent = '–';
   expectedChord.className = '';

@@ -91,9 +91,13 @@ export function buildExport({ view, expected, audioName, step }) {
   }
 
   const data = {
-    readme: readme({ audioName, expected, step, templates: view.templateCount }),
+    readme: readme({ audioName, expected, step, templates: view.templateCount, tempo: view.tempo }),
     audio: { file: audioName, duration: round(duration, 2), frameRate: round(frameRate, 3), frames },
   };
+  if (view.tempo) {
+    data.tempo = { bpm: round(view.tempo.bpm, 1), meter: view.tempo.meter };
+    data.bars = view.beats.filter((beat) => beat.position === 1).map((beat) => round(beat.time, 2));
+  }
   if (comparison) {
     data.expectedFile = expected.name;
     data.score = { exact: round(comparison.exact, 3), root: round(comparison.root, 3) };
@@ -123,9 +127,13 @@ function gated(gate, first, last) {
   return { gated: { ...(counts[1] ? { vsN: share(counts[1]) } : {}), ...(counts[2] ? { rootMargin: share(counts[2]) } : {}) } };
 }
 
-function readme({ audioName, expected, step, templates }) {
+function readme({ audioName, expected, step, templates, tempo }) {
   return [
     `Chord analysis of ${audioName} by Chordino (NNLS chroma, chord template matching, HMM/Viterbi smoothing). Times are in seconds.`,
+    ...(tempo ? [
+      'tempo: the BPM and time signature the beat tracker found; the BPM counts the note of the denominator (eighths in 6/8 and 12/8).',
+      'bars: when each bar starts, its downbeat, as the beat tracker placed them.',
+    ] : []),
     'detected: the chord segments the Viterbi path settled on. N = no chord.',
     ...(expected ? [
       `expected: reference chords from ${expected.name}.`,
