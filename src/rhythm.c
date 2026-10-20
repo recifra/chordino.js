@@ -22,12 +22,17 @@ TUNABLE double tempoCentre = 120;
 TUNABLE double tempoSpread = 1;     // octaves
 TUNABLE int combSize = 4;           // multiples of the period that count
 TUNABLE double windowSeconds = 8;   // of each autocorrelation
-// Beats: how much a beat costs for each octave its interval is off the period
+// Beats: what a beat costs for the square of the log of how far its interval
+// is off the period (Ellis's tightness)
 TUNABLE double tightness = 600;
+TUNABLE double drift = 1.25;        // how far the period of a stretch may be off the whole's
+TUNABLE int driftWindows = 5;       // seconds the period of a stretch is the median of
+TUNABLE double driftCost = 2;       // what a stretch loses for each octave² it is off the whole
 // Bars
 TUNABLE double changeLead = 0.5;    // of a beat before it, where its chord changes count
 TUNABLE double changeWeight = 1;
 TUNABLE double bassWeight = 1;
+TUNABLE double twoBias = 1;
 TUNABLE double fourBias = 1.3;      // 4 beats a bar over 2 or 3, at the same contrast
 TUNABLE double jumpCost = 8;        // accent a bar has to gain to start out of turn
 TUNABLE double sixBias = 1;         // 6 eighths a bar over 3 beats
@@ -129,14 +134,12 @@ ONCE static double interpolate(const double *values, int count, double at) {
     return values[below] * (1 - fraction) + values[below + 1] * fraction;
 }
 
-// The beat period, in frames, whose multiples the onset strength repeats at
-// most, weighed by the prior
-ONCE static double estimate_period(const float *strength, int count, double period) {
+// The beat period, in frames, whose multiples the onset strength (detrended,
+// as x) repeats at most, weighed by the prior
+ONCE static double estimate_period(const double *x, int count, double period) {
     double fastest = 60 / (maxBpm * period), slowest = 60 / (minBpm * period);
     int maxLag = (int) ceil(slowest * combSize) + 1;
-    double *x = malloc(count * sizeof(double));
     double *acf = malloc((maxLag + 1) * sizeof(double));
-    detrend(strength, count, x);
     autocorrelate(x, count, nearest(windowSeconds / period), maxLag, acf);
     double best = 0, bestScore = -INFINITY;
     for (double lag = fastest; lag <= slowest; lag += 0.25) {
@@ -149,15 +152,78 @@ ONCE static double estimate_period(const float *strength, int count, double peri
             best = lag;
         }
     }
-    free(x);
     free(acf);
     return best;
 }
 
+// The beat period at every frame: the one the onset strength (detrended, as x)
+// repeats at most, with its double, in the windowSeconds around each second,
+// within drift of lag, the period of the whole, either way, and the further
+// off it the more it has to repeat; the median of driftWindows seconds of
+// them. A band playing live drifts, and the beats follow it.
+ONCE static void local_periods(const double *x, int count, double lag, double period, double *periods) {
+    int hop = nearest(1 / period), window = nearest(windowSeconds / period);
+    int steps = count / hop + 1;
+    double low = lag / drift, high = lag * drift;
+    int maxLag = (int) ceil(high * 2) + 1;
+    double *acf = malloc((maxLag + 2) * sizeof(double));
+    double *best = malloc(steps * sizeof(double));
+    for (int step = 0; step < steps; ++step) {
+        int start = step * hop - window / 2, end = start + window;
+        if (start < 0) start = 0;
+        if (end > count) end = count;
+        double energy = 0;
+        for (int i = start; i < end; ++i) energy += x[i] * x[i];
+        best[step] = lag;
+        if (!(energy > 0)) continue;
+        for (int l = (int) floor(low); l <= maxLag + 1; ++l) {
+            // Only the lags of the period and of its double
+            if (l > ceil(high) + 1 && l < floor(low * 2)) {
+                acf[l] = 0;
+                continue;
+            }
+            double sum = 0;
+            for (int i = start; i < end && i + l < count; ++i) sum += x[i] * x[i + l];
+            acf[l] = sum / energy;
+        }
+        double bestScore = -INFINITY;
+        for (double candidate = low; candidate <= high; candidate += 0.25) {
+            double score = interpolate(acf, maxLag + 2, candidate) + interpolate(acf, maxLag + 2, candidate * 2);
+            double octaves = log(candidate / lag) / M_LN2;
+            score -= driftCost * octaves * octaves;
+            if (score > bestScore) {
+                bestScore = score;
+                best[step] = candidate;
+            }
+        }
+    }
+    // The median of each few, then a straight line between them
+    double *median_of = malloc(steps * sizeof(double));
+    double few[16];
+    int reach = driftWindows / 2;
+    for (int step = 0; step < steps; ++step) {
+        int n = 0;
+        for (int j = step - reach; j <= step + reach; ++j) {
+            if (j >= 0 && j < steps && n < 16) few[n++] = best[j];
+        }
+        median_of[step] = median(few, n);
+    }
+    for (int i = 0; i < count; ++i) {
+        int step = i / hop;
+        double fraction = (double) (i - step * hop) / hop;
+        periods[i] = step + 1 < steps
+            ? median_of[step] * (1 - fraction) + median_of[step + 1] * fraction
+            : median_of[step];
+    }
+    free(acf);
+    free(best);
+    free(median_of);
+}
+
 // Ellis's dynamic programming: the beats, as frames, that land on the most
-// onset strength with intervals the closest to the period. Returns how many
-// went into beats.
-ONCE static int track_beats(const float *strength, int count, double lag, int *beats) {
+// onset strength with intervals the closest to the period, lag over the
+// whole and periods at each frame. Returns how many went into beats.
+ONCE static int track_beats(const float *strength, int count, double lag, const double *periods, int *beats) {
     double mean = 0, deviation = 0;
     for (int i = 0; i < count; ++i) mean += strength[i];
     mean /= count;
@@ -184,12 +250,10 @@ ONCE static int track_beats(const float *strength, int count, double lag, int *b
     }
     free(kernel);
 
-    int closest = nearest(lag / 2), farthest = nearest(lag * 2);
-    double *cost = malloc((farthest + 1) * sizeof(double));
-    for (int d = closest; d <= farthest; ++d) {
-        double octaves = log((double) d / lag);
-        cost[d] = -tightness * octaves * octaves;
-    }
+    // The log of each interval a beat can follow the one before at
+    int farthest = (int) ceil(lag * drift * 2) + 1;
+    double *logs = malloc((farthest + 1) * sizeof(double));
+    for (int d = 1; d <= farthest; ++d) logs[d] = log(d);
     double *cumulative = malloc(count * sizeof(double));
     int *back = malloc(count * sizeof(int));
     bool first = true;
@@ -197,8 +261,13 @@ ONCE static int track_beats(const float *strength, int count, double lag, int *b
         // Reaching back before the start costs only the interval
         double best = -INFINITY;
         int from = -1;
-        for (int d = closest; d <= farthest; ++d) {
-            double candidate = cost[d] + (i - d >= 0 ? cumulative[i - d] : 0);
+        double here = log(periods[i]);
+        int closest = nearest(periods[i] / 2), last = nearest(periods[i] * 2);
+        if (closest < 1) closest = 1;
+        if (last > farthest) last = farthest;
+        for (int d = closest; d <= last; ++d) {
+            double off = logs[d] - here;
+            double candidate = -tightness * off * off + (i - d >= 0 ? cumulative[i - d] : 0);
             if (candidate > best) {
                 best = candidate;
                 from = i - d;
@@ -259,7 +328,7 @@ ONCE static int track_beats(const float *strength, int count, double lag, int *b
 
     free(values);
     free(score);
-    free(cost);
+    free(logs);
     free(cumulative);
     free(back);
     return beatCount;
@@ -358,7 +427,7 @@ ONCE static double contrast(const double *accent, int beatCount, int every) {
 // of them to stand out by chance; then twos make 2 or 4 a bar, and threes 3,
 // or 6 for beats as fast as the eighths of 6/8.
 ONCE static int find_bars(const double *accent, int beatCount, double bpm) {
-    double two = contrast(accent, beatCount, 2);
+    double two = twoBias > 0 ? contrast(accent, beatCount, 2) * twoBias : -INFINITY;
     double three = contrast(accent, beatCount, 3);
     double four = contrast(accent, beatCount, 4) * fourBias;
     double six = bpm >= eighthBpm ? contrast(accent, beatCount, 6) * sixBias : -INFINITY;
@@ -412,9 +481,15 @@ ONCE const rhythm_result_t *rhythm_decode(rhythm_t *rhythm, const chordino_resul
     const float *strength = onset->strength.data;
     if (count < 2) return &rhythm->result;
 
-    double lag = estimate_period(strength, count, onset->period);
+    double *x = malloc(count * sizeof(double));
+    detrend(strength, count, x);
+    double lag = estimate_period(x, count, onset->period);
+    double *periods = malloc(count * sizeof(double));
+    local_periods(x, count, lag, onset->period, periods);
+    free(x);
     int *beats = malloc(count * sizeof(int));
-    int beatCount = lag > 0 ? track_beats(strength, count, lag, beats) : 0;
+    int beatCount = lag > 0 ? track_beats(strength, count, lag, periods, beats) : 0;
+    free(periods);
     if (beatCount < 2) {
         free(beats);
         return &rhythm->result;

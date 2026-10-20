@@ -55,7 +55,9 @@ Everything lands in `build/`:
   denominator, beats: [{ time, position }] }`, or `null`. `src/onset.c` makes
   the onset strength they come from, the spectral flux of madmom's SuperFlux
   at 100 frames a second; the tempo is the period it repeats at most, weighed
-  towards 120 BPM, and the beats are Ellis's dynamic programming over it.
+  towards 120 BPM, and the beats are Ellis's dynamic programming over it,
+  with the period of every few seconds free to drift up to a quarter off it,
+  as a band playing live does.
   The bars are where Chordino's chords change and the bass comes in: two
   beats or four a bar, or three, or six eighths of 6/8, whichever stands out
   most, with a Viterbi pass that lets a bar start out of turn where the
@@ -135,6 +137,15 @@ Run from the repository root. They load the files in `build/`, so build first.
 
 ```sh
 npm test
+```
+
+`test/eval.js` and `test/eval-beats.js` are not part of it: they score a
+recording against reference chords, and against reference beats (a beat per
+line, its time and its position in the bar, as the Ballroom and GTZAN
+annotations have them) or chord changes, while tuning the detectors.
+
+```sh
+node test/eval-beats.js training/training.mp3 training/training.json
 ```
 
 ## Publishing
