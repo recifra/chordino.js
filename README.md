@@ -26,7 +26,7 @@ The package holds these files, in `node_modules/chordino.js/build/`:
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `chordino.wasm` | 71 KB (37 KB gzipped) | Chordino and the tuner's YIN, with KISS FFT |
+| `chordino.wasm` | 73 KB (38 KB gzipped) | Chordino and the tuner's YIN, with KISS FFT |
 | `chordino.mjs` | 5 KB | ES module that loads the wasm; default export `createChordino()` |
 | `chord-worker.mjs` | 1 KB | Module worker for whole recordings |
 | `chord-live-worker.mjs` | 2 KB | Module worker that runs Chordino on live input |
@@ -45,7 +45,7 @@ cp node_modules/chordino.js/build/*.mjs node_modules/chordino.js/build/*.wasm pu
 ```
 
 Or load them from a CDN that mirrors npm, such as
-`https://cdn.jsdelivr.net/npm/chordino.js@0.3.1/build/`. A worker from another
+`https://cdn.jsdelivr.net/npm/chordino.js@0.4.0/build/`. A worker from another
 origin needs the shim shown below. With Vite there is nothing to copy: see
 [With Vite](#with-vite).
 

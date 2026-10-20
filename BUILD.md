@@ -78,7 +78,7 @@ Everything lands in `build/`:
   below. Not for apps, and not in the package.
 
 An app ships the six files at the top of `build/` together, in one directory.
-The three workers share the one `.wasm` (5 KB + 71 KB; the old single-file
+The three workers share the one `.wasm` (5 KB + 73 KB; the old single-file
 bundles inlined it in each, 372 KB apiece); the workers and the worklet add 1,
 2, 3 and 1 KB of their own.
 

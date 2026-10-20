@@ -1,6 +1,6 @@
 {
   "name": "chordino.js",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Chord detection in the browser: the Chordino Vamp plugin, ported to C and compiled to WebAssembly, with a Web Worker for recordings and an AudioWorklet feeding a Web Worker for live input, plus a live tuner",
   "keywords": [
     "chord",
