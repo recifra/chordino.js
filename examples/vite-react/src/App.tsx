@@ -29,6 +29,11 @@ function Recording() {
       {state.status === 'detecting' && <progress value={state.progress} />}
       {state.status === 'error' && <p role="alert">{state.message}</p>}
       {state.status === 'done' && (
+        <p id="tempo">
+          {state.tempo ? `${state.tempo.bpm} BPM, ${state.tempo.meter.join('/')}` : 'No beats'}
+        </p>
+      )}
+      {state.status === 'done' && (
         <ol id="timestamps">
           {state.timestamps.map(([chord, seconds]) => (
             <li key={seconds}>

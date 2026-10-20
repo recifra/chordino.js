@@ -88,11 +88,14 @@
       if (data.type === 'progress') {
         setStatus(`Detecting chords in ${name}… ${Math.round(data.value * 100)}%`, data.value);
       } else if (data.type === 'done') {
-        const { timestamps } = data.result;
+        const { timestamps, beats, tempo } = data.result;
         const seconds = ((performance.now() - started) / 1000).toFixed(1);
-        finish(`${name}: ${timestamps.length} marks, detected in ${seconds} s`);
-        // One mark per line, like the hand-made chord files
-        const text = `{"timestamps":[\n${timestamps.map((mark) => `  ${JSON.stringify(mark)}`).join(',\n')}\n]}\n`;
+        const rhythm = tempo ? `${tempo.bpm} BPM in ${tempo.meter.join('/')}` : 'no beats';
+        finish(`${name}: ${timestamps.length} marks, ${rhythm}, detected in ${seconds} s`);
+        // One mark per line, like the hand-made chord files, and one beat
+        const lines = (list) => list.map((item) => `  ${JSON.stringify(item)}`).join(',\n');
+        const text = `{"timestamps":[\n${lines(timestamps)}\n],\n"tempo":${JSON.stringify(tempo)},\n` +
+          `"beats":[\n${lines(beats)}\n]}\n`;
         output.textContent = text;
         URL.revokeObjectURL(download.href);
         download.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));

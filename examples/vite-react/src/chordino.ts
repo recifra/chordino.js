@@ -8,9 +8,12 @@ import processorUrl from 'chordino.js/chord-processor.mjs?worker&url';
 /** [chord, seconds] marks; '' is no chord, and the last one is ['', duration] */
 export type Timestamps = [chord: string, seconds: number][];
 
+/** BPM of the note the meter counts (the eighth in 6/8); null when there are no beats */
+export type Tempo = { bpm: number; meter: [numerator: number, denominator: number] } | null;
+
 type WorkerMessage =
   | { type: 'progress'; value: number }
-  | { type: 'done'; result: { timestamps: Timestamps } }
+  | { type: 'done'; result: { timestamps: Timestamps; tempo: Tempo } }
   | { type: 'error'; message: string };
 
 type LiveWorkerMessage =
@@ -26,7 +29,7 @@ export type DetectionState =
   | { status: 'idle' }
   | { status: 'decoding' }
   | { status: 'detecting'; progress: number }
-  | { status: 'done'; timestamps: Timestamps }
+  | { status: 'done'; timestamps: Timestamps; tempo: Tempo }
   | { status: 'error'; message: string };
 
 /** Detects the chords of a whole recording (any format the browser decodes) in a Web Worker. */
@@ -60,7 +63,7 @@ export function useChordDetection() {
       if (data.type === 'progress') {
         setState({ status: 'detecting', progress: data.value });
       } else if (data.type === 'done') {
-        finish({ status: 'done', timestamps: data.result.timestamps });
+        finish({ status: 'done', timestamps: data.result.timestamps, tempo: data.result.tempo });
       } else {
         finish({ status: 'error', message: data.message });
       }
