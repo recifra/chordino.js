@@ -55,7 +55,7 @@ Everything lands in `build/`:
   denominator, beats: [{ time, position }] }`, or `null`. `src/onset.c` makes
   the onset strength they come from, the spectral flux of madmom's SuperFlux
   at 100 frames a second; the tempo is the period it repeats at most, weighed
-  towards 120 BPM, and the beats are Ellis's dynamic programming over it,
+  towards 110 BPM, and the beats are Ellis's dynamic programming over it,
   with the period of every few seconds free to drift up to a quarter off it,
   as a band playing live does.
   The bars are where Chordino's chords change and the bass comes in: four

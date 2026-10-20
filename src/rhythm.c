@@ -18,7 +18,7 @@ int rhythmSplit;                    // what the last decode split its beats in, 
 // Tempo: BPM looked for, and the prior over them, a log-normal distribution
 TUNABLE double minBpm = 40;
 TUNABLE double maxBpm = 240;
-TUNABLE double tempoCentre = 120;
+TUNABLE double tempoCentre = 110;
 TUNABLE double tempoSpread = 1;     // octaves
 TUNABLE int combSize = 4;           // multiples of the period that count
 TUNABLE double windowSeconds = 8;   // of each autocorrelation
