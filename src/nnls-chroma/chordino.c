@@ -407,6 +407,20 @@ void chordino_process(chordino_t *c, const float *fbuf, realtime_t timestamp) {
     vector_push(&c->logSpectrum, nm, 1);
 }
 
+// Whether a chord template (24 bins, bass first) holds just a major triad on root
+// and its minor 7th, whatever its bass
+static bool dominant_seventh(const float *chord, int root) {
+    int noteCount = 0;
+    for (int iBin = 12; iBin < 24; iBin++) {
+        if (chord[iBin] > 0) noteCount++;
+    }
+    static const int intervals[] = {0, 4, 7, 10};
+    for (int i = 0; i < 4; i++) {
+        if (!(chord[12 + (root + intervals[i]) % 12] > 0)) return false;
+    }
+    return noteCount == 4;
+}
+
 // Reports frame of nFrame through a stage spanning from-to on the 0-1 scale
 static void report(void (*progress)(double done), double from, double to, int frame, int nFrame) {
     if (progress) progress(from + (to - from) * frame / nFrame);
@@ -454,6 +468,13 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
     //    product, so C5 outscored a fully-voiced C major. Penalise thinner-than-triad
     //    templates by the same factor so a "5" only wins when the third really is
     //    absent.
+    //  - but not the dominant 7th, which is no extension of a triad but a chord of its
+    //    own, the V7 into its tonic. Penalised, its seventh had to sound at about 0.6
+    //    of the strongest note just to tie with the triad, so the Bb7 held for 2 s
+    //    before Eb in a hymn, with Ab at 0.6-0.7, came out as Bb all through, and of
+    //    the 38 s of dominant 7ths in training.mp3 under 4 s came out as such. The 7ths
+    //    it adds where the reference has the triad do have the 7th in the chroma (B7
+    //    with A at 0.7, G7 with F at 0.5-0.9, and the G7/F the reference has as F).
     double *bassNorm = malloc(nChord * sizeof(double));
     double *trebleNorm = malloc(nChord * sizeof(double));
     double *noteCountPenalty = malloc(nChord * sizeof(double));
@@ -473,7 +494,7 @@ const chordino_result_t *chordino_decode(chordino_t *c, void (*progress)(double 
         bassNorm[iChord] = bassSumSq > 0 ? sqrt(bassSumSq) : 1.0;
         trebleNorm[iChord] = trebleSumSq > 0 ? sqrt(trebleSumSq) : 1.0;
         noteCountPenalty[iChord] = 1.0;
-        if (iChord != nChord - 1 && noteCount > 3) {
+        if (iChord != nChord - 1 && noteCount > 3 && !dominant_seventh(chorddict + 24 * iChord, iChord % 12)) {
             noteCountPenalty[iChord] = pow(0.93, noteCount - 3);
         }
         if (iChord != nChord - 1 && noteCount < 3) {
