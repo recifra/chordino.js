@@ -46,7 +46,7 @@ cp node_modules/chordino.js/build/*.mjs node_modules/chordino.js/build/*.wasm pu
 ```
 
 Or load them from a CDN that mirrors npm, such as
-`https://cdn.jsdelivr.net/npm/chordino.js@0.5.0/build/`. A worker from another
+`https://cdn.jsdelivr.net/npm/chordino.js@0.6.0/build/`. A worker from another
 origin needs the shim shown below. With Vite there is nothing to copy: see
 [With Vite](#with-vite).
 
