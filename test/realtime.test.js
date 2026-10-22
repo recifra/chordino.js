@@ -229,6 +229,36 @@ describe('realtime processor and worker', () => {
     assert.ok(Math.abs(posted[1000] - 2 - 1.2) < 0.15, `F posted ${posted[1000] - 2}s after it started with delayMs 1000`);
   });
 
+  /** C and F, with a passing Am of 0.6 s between them */
+  function passingChord() {
+    return concat(
+      roomTone(1, SAMPLE_RATE),
+      synthChord(['C3', 'C4', 'E4', 'G4'], 2, SAMPLE_RATE),
+      synthChord(['A2', 'A3', 'C4', 'E4'], 0.6, SAMPLE_RATE),
+      synthChord(['F2', 'A3', 'C4', 'F4'], 3, SAMPLE_RATE),
+    );
+  }
+
+  test('minChordMs leaves out the chords that last less than it', async () => {
+    const samples = passingChord();
+    const { processor } = await listen();
+    stream(processor, clock, samples, SAMPLE_RATE);
+    assert.deepEqual(detected(), ['C', 'Am', 'F']);
+
+    worker.messages.length = 0;
+    const { processor: steady } = await listen({ minChordMs: 1000 });
+    stream(steady, clock, samples, SAMPLE_RATE);
+    assert.deepEqual(detected(), ['C', 'F']);
+  });
+
+  test('options changes how it reads while it listens', async () => {
+    const { processor } = await listen();
+    await worker.send({ type: 'options', delayMs: 1500, minChordMs: 1000 });
+    stream(processor, clock, passingChord(), SAMPLE_RATE);
+
+    assert.deepEqual(detected(), ['C', 'F']);
+  });
+
   test('stays quiet on silence', async () => {
     const { processor } = await listen();
     stream(processor, clock, new Float32Array(3 * SAMPLE_RATE), SAMPLE_RATE);

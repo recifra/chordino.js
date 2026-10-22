@@ -152,7 +152,7 @@ The worker posts:
 - `{ type: 'ready' }` once the wasm is up; audio before that is skipped;
 - `{ type: 'chordResult', result: { chord, time } }` on every chord change.
   `time` is when the chord started, in seconds on the `AudioContext` clock. It
-  arrives `delayMs` plus about 0.2 s after that. Nothing is posted where the
+  arrives `delayMs` plus `minChordMs` plus about 0.2 s after that. Nothing is posted where the
   sustained level, the lower quartile of the RMS of 10 ms slices within 200 ms,
   is under 0.008 (−42 dB): near silence, and sounds that do not ring on, such
   as typing, steps or knocks, however loud each is. What stays in the spectrum
@@ -172,6 +172,15 @@ worker (the plugin goes with it) and close the context.
 The newest frames are the least settled, so a lower value shows chords sooner
 and a higher one makes them agree with what `chord-worker.mjs` finds in the
 same audio: about 95% of the time at 0 ms, 99% at 1000 ms.
+
+`minChordMs` (default 0) is how long a chord has to have lasted at that point
+to be posted. Chordino follows every chord played, passing ones too; with
+`minChordMs` the chords shorter than it are left out, and the chord before them
+stays the last one posted.
+
+Send the worker `{ type: 'options', delayMs, minChordMs }` to change either
+while it listens: unlike another `start`, it keeps what Chordino has taken for
+the background of the room.
 
 The worklet sends the worker every buffer gathered since the worker last
 replied, so a worker that falls behind, on a slow device, reads once for

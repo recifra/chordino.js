@@ -9,7 +9,7 @@
 //   await context.audioWorklet.addModule(new URL('chord-processor.mjs', lib));
 //   const node = new AudioWorkletNode(context, 'chord-processor');
 //   const { port1, port2 } = new MessageChannel();
-//   worker.postMessage({ type: 'start', sampleRate: context.sampleRate, delayMs, port: port1 }, [port1]);
+//   worker.postMessage({ type: 'start', sampleRate: context.sampleRate, delayMs, minChordMs, port: port1 }, [port1]);
 //   node.port.postMessage({ type: 'port', port: port2 }, [port2]);
 //
 // It posts { type: 'ready' } once the wasm is up (audio before that is skipped),
@@ -21,7 +21,10 @@
 // delayMs (default 1000) is how far behind the newest audio the chord posted is
 // read: less shows chords sooner, more makes them agree with what
 // chord-worker.mjs finds in the same audio (about 95% of the time at 0, 99% at
-// 1000).
+// 1000). minChordMs (default 0) is how long a chord has to have lasted by then
+// to be posted: passing chords shorter than it are left out, and the others
+// come that much later. { type: 'options', delayMs, minChordMs } changes either
+// while it listens, keeping what Chordino has learned of the room.
 
 import createChordino, { type Chord, type ChordinoModule } from './chordino.mjs';
 
@@ -46,7 +49,9 @@ let session: Session | null = null;
 
 onmessage = async ({ data }: MessageEvent) => {
   if (data?.type === 'start') {
-    await start(data.port, data.sampleRate, data.delayMs ?? 1000);
+    await start(data.port, data.sampleRate, { delayMs: data.delayMs ?? 1000, minChordMs: data.minChordMs ?? 0 });
+  } else if (data?.type === 'options') {
+    session?.setOptions(data);
   } else if (data?.type === 'stop') {
     stop();
     post({ type: 'stopped' });
@@ -57,14 +62,20 @@ function post(message: WorkerMessage) {
   postMessage(message);
 }
 
-async function start(port: MessagePort | undefined, sampleRate: unknown, delayMs: number) {
+/** How the chord posted is read: how far behind the newest audio, and how long it has to have lasted by then */
+interface ReadOptions {
+  delayMs: number;
+  minChordMs: number;
+}
+
+async function start(port: MessagePort | undefined, sampleRate: unknown, options: ReadOptions) {
   stop();
   let current: Session | null = null;
   try {
     if (typeof port?.postMessage !== 'function' || typeof sampleRate !== 'number' || !(sampleRate > 0)) {
       throw new Error('expected { type: "start", sampleRate, port }');
     }
-    current = new Session(port, sampleRate, delayMs);
+    current = new Session(port, sampleRate, options);
     session = current;
     chordino ??= createChordino().catch((err: unknown) => {
       chordino = null;
@@ -94,7 +105,8 @@ function stop() {
 class Session {
   private readonly port: MessagePort;
   private readonly sampleRate: number;
-  private readonly delayMs: number;
+  private delayMs: number;
+  private minChordMs: number;
   private module: ChordinoModule | undefined;
   private instance = 0;
   private pBuffer = 0;
@@ -122,7 +134,7 @@ class Session {
   private readonly slices: { startMs: number; rms: number }[] = [];
   private loudUntilMs = -Infinity;
 
-  constructor(port: MessagePort, sampleRate: number, delayMs: number) {
+  constructor(port: MessagePort, sampleRate: number, { delayMs, minChordMs }: ReadOptions) {
     this.port = port;
     this.sampleRate = sampleRate;
     // How far behind the newest frame the chord shown is read. The newest frames
@@ -130,6 +142,9 @@ class Session {
     // Viterbi path can still change there, so they need a little of the audio
     // after them to come out as they would in the offline extraction.
     this.delayMs = delayMs;
+    // How long the chord read has to have lasted by then: Chordino follows
+    // every chord played, so a passing one shows for a moment otherwise.
+    this.minChordMs = minChordMs;
     // Answered from the start, wasm or not, as the worklet waits for each reply
     // before it sends more
     port.onmessage = ({ data }: MessageEvent<{ blocks: Block[] }>) => {
@@ -152,6 +167,12 @@ class Session {
     if (!this.instance) {
       throw new Error(`Chordino did not start at ${this.sampleRate} Hz`);
     }
+  }
+
+  /** Changes the options given, leaving the others and the plugin as they are */
+  setOptions({ delayMs, minChordMs }: Partial<ReadOptions>) {
+    this.delayMs = delayMs ?? this.delayMs;
+    this.minChordMs = minChordMs ?? this.minChordMs;
   }
 
   close() {
@@ -224,7 +245,10 @@ class Session {
     const readAtMs = (chordList.at(-1)?.time ?? 0) * 1000 - this.delayMs;
     const chordItem = chordList.slice(0, -1).findLast((item) => item.time * 1000 <= readAtMs);
     const quiet = this.sustainedRms(readAtMs) < this.silenceRmsThreshold;
-    if (chordItem && !quiet && chordItem.chord !== 'N' && this.lastChord !== chordItem.chord) {
+    // A chord that ends before it has lasted minChordMs never gets here, and the
+    // one before it stays posted
+    const held = chordItem !== undefined && readAtMs - chordItem.time * 1000 >= this.minChordMs;
+    if (chordItem && held && !quiet && chordItem.chord !== 'N' && this.lastChord !== chordItem.chord) {
       this.lastChord = chordItem.chord;
       post({ type: 'chordResult', result: chordItem });
     }
